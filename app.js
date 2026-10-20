@@ -5,10 +5,14 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '9 · 20/10/2026';
+const VERSIONE = '10 · 20/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
+import {
+  driveConfigurato, accedi as accediDrive, scollega as scollegaDrive, accessoAttivo,
+  salvaVerbaleSuDrive, verbaliDaInviare, linkCartella, CARTELLA_PRINCIPALE
+} from './drive.js';
 import { oggiISO, oraHHMM, fmtData, scaduta, ridimensiona, blobToDataURL, condividiOScarica, scarica } from './util.js';
 
 const SignaturePad = window.SignaturePad;
@@ -406,6 +410,7 @@ function Home() {
   const nc = useLive(() => db.nonConformita.filter(n => !n.bozza && n.stato !== 'risolta').toArray());
   const bozze = useLive(() => db.verbali.where('stato').equals('bozza').toArray());
   const imp = useLive(() => getImpostazioni());
+  const sospesiDrive = useLive(() => driveConfigurato() ? verbaliDaInviare() : [], []);
   const [scelta, setScelta] = useState(false);
 
   if (!cantieri || !nc || !bozze || !imp) return null;
@@ -435,6 +440,9 @@ function Home() {
       <button class="btn primary" onClick=${caricaEsempio}>Carica esempio</button>
     </div>`}
     ${!imp.nome && html`<div class="banner info">Inizia dalle <a href="#/impostazioni">Impostazioni</a>: inserisci i tuoi dati di CSE, il logo e la firma.</div>`}
+    ${imp.driveCollegato && sospesiDrive?.length > 0 && !PROVA && html`<div class="banner warn">
+      ${sospesiDrive.length === 1 ? '1 verbale da salvare' : `${sospesiDrive.length} verbali da salvare`} su Google Drive.
+      <a href="#/impostazioni">Salva ora</a></div>`}
     ${backupDovuto && !PROVA && html`<div class="banner warn">
       ${giorni === null ? 'Non hai ancora fatto un backup. ' : `Ultimo backup ${giorni} giorni fa. `}I dati sono solo su questo dispositivo. <a href="#/impostazioni">Fai il backup</a></div>`}
 
@@ -1155,6 +1163,16 @@ function VerbaleView({ id }) {
     const r = await condividiOScarica(f, oggettoEmail(v, c));
     if (r === 'scaricato') setMsg('PDF salvato nei Download.');
   };
+  const scaricaWord = async () => {
+    setBusy(true);
+    try {
+      const { generaWord } = await import('./word.js');
+      const f = await generaWord(vid);
+      const r = await condividiOScarica(f, oggettoEmail(v, c));
+      if (r === 'scaricato') setMsg('Word salvato nei Download.');
+    } catch (e) { console.error(e); avviso('Errore nella creazione del file Word: ' + e.message); }
+    finally { setBusy(false); }
+  };
   const scaricaPdf = async () => { const f = await genera(); if (f) { scarica(f); setMsg('PDF salvato nei Download.'); } };
   // Email con il PDF già allegato: si passa dalla condivisione di Android (Gmail, app PEC…), che allega il file
   // e compila oggetto e testo. I destinatari non passano da lì: li copiamo negli appunti da incollare nel campo «A».
@@ -1218,6 +1236,7 @@ function VerbaleView({ id }) {
         ${n.descrizione} — <i>${nomi[n.impresaId] || ''}</i>, entro ${fmtData(n.termine)}</li>`)}</ul>`}
     </section>
     <section class="card actions">
+      <${DriveVerbale} v=${v} />
       ${PROVA ? html`
         <button class="btn primary big" disabled=${busy} onClick=${anteprima}>${busy ? 'Genero il PDF…' : 'Vedi il PDF del verbale'}</button>
         <div class="banner warn">Versione di prova: qui il PDF si può solo vedere. Scaricarlo, condividerlo e inviarlo per email funziona nell'app installata sul tablet.</div>`
@@ -1225,6 +1244,7 @@ function VerbaleView({ id }) {
         <button class="btn primary big" disabled=${busy} onClick=${anteprima}>${busy ? 'Genero il PDF…' : 'Anteprima e invio'}</button>
         <button class="btn" disabled=${busy} onClick=${condividi}>Condividi PDF</button>
         <button class="btn" disabled=${busy} onClick=${scaricaPdf}>Scarica PDF</button>
+        <button class="btn" disabled=${busy} onClick=${scaricaWord}>Scarica Word</button>
         <button class="btn" disabled=${busy} onClick=${email}>Email con PDF allegato</button>`}
       <div class="row-btns">
         <button class="btn" onClick=${modifica}>Modifica verbale</button>
@@ -1239,6 +1259,78 @@ function VerbaleView({ id }) {
         i destinatari sono copiati: incollali nel campo «A». Per la data certa firma digitalmente il PDF (PAdES) e invialo via PEC.</div>
     </section>
   </main>`;
+}
+
+// ---------- Google Drive ----------
+
+// Riquadro nel verbale chiuso: salva PDF e Word nella cartella del cantiere su Drive.
+function DriveVerbale({ v }) {
+  const imp = useLive(() => getImpostazioni());
+  const online = useOnline();
+  const [stato, setStato] = useState({ busy: false, msg: '', errore: false });
+  const salva = async () => {
+    setStato({ busy: true, msg: 'Salvo PDF e Word su Google Drive…' });
+    try {
+      await salvaVerbaleSuDrive(v.id);
+      setStato({ busy: false, msg: '' });
+    } catch (e) { setStato({ busy: false, msg: e.message, errore: true }); }
+  };
+  // Appena chiuso (o modificato) si salva da solo, se l'accesso a Google è ancora attivo.
+  useEffect(() => {
+    if (driveConfigurato() && v.driveDaInviare && online && accessoAttivo()) salva();
+  }, [v.id, v.revisione]);
+  if (!driveConfigurato() || PROVA || !imp) return null;
+  if (!imp.driveCollegato) return html`<div class="banner info">Collega Google Drive in <a href="#/impostazioni">Impostazioni</a>: i verbali verranno salvati in PDF e Word nella cartella «${CARTELLA_PRINCIPALE}».</div>`;
+  const aggiornato = v.drive && !v.driveDaInviare && (v.drive.revisione || 0) === (v.revisione || 0);
+  return html`<div class=${'drive-box' + (aggiornato ? ' ok' : '')}>
+    ${aggiornato
+      ? html`<span><b>Salvato su Google Drive</b><small>PDF e Word · ${new Date(v.drive.salvato).toLocaleString('it-IT')}</small></span>
+          <a class="btn small" href=${linkCartella(v.drive.cartellaId)} target="_blank" rel="noopener">Apri cartella</a>`
+      : html`<span><b>Da salvare su Google Drive</b><small>${online ? 'PDF e Word nella cartella del cantiere' : 'Senza connessione: lo salverai appena torna internet'}</small></span>
+          <button class="btn small primary" disabled=${stato.busy || !online} onClick=${salva}>${stato.busy ? 'Salvo…' : 'Salva su Drive'}</button>`}
+    ${stato.msg && html`<p class=${'hint' + (stato.errore ? ' red-text' : '')}>${stato.msg}</p>`}
+  </div>`;
+}
+
+// Riquadro in Impostazioni: collegamento dell'account e salvataggio dei verbali in sospeso.
+function DriveImpostazioni() {
+  const imp = useLive(() => getImpostazioni());
+  const sospesi = useLive(() => verbaliDaInviare(), []);
+  const online = useOnline();
+  const [stato, setStato] = useState({ busy: false, msg: '' });
+  if (!imp || !sospesi) return null;
+  const collega = async () => {
+    setStato({ busy: true, msg: 'Apro l\'accesso a Google…' });
+    try { await accediDrive({ conferma: true }); setStato({ busy: false, msg: 'Google Drive collegato.' }); }
+    catch (e) { setStato({ busy: false, msg: e.message }); }
+  };
+  const salvaTutti = async () => {
+    let ok = 0;
+    try {
+      for (const v of sospesi) { setStato({ busy: true, msg: `Salvo il verbale n. ${v.numero} (${ok + 1} di ${sospesi.length})…` }); await salvaVerbaleSuDrive(v.id); ok++; }
+      setStato({ busy: false, msg: `${ok} verbali salvati su Drive.` });
+    } catch (e) { setStato({ busy: false, msg: `${ok} salvati, poi errore: ${e.message}` }); }
+  };
+  const scollega = async () => {
+    if (!await chiedi('Scollegare Google Drive? I file già salvati restano su Drive.', 'Scollega')) return;
+    await scollegaDrive(); setStato({ busy: false, msg: 'Google Drive scollegato.' });
+  };
+  return html`<section class="card">
+    <h3>Google Drive</h3>
+    ${!driveConfigurato() ? html`<p class="muted">Il collegamento a Google Drive è in preparazione.</p>`
+    : PROVA ? html`<p class="muted">Disponibile nell'app installata.</p>`
+    : imp.driveCollegato ? html`
+      <p class="muted">Ogni verbale chiuso viene salvato in PDF e Word in <b>${CARTELLA_PRINCIPALE} / [nome del cantiere]</b>.</p>
+      <div class="row-btns">
+        ${imp.driveCartellaId && html`<a class="btn small" href=${linkCartella(imp.driveCartellaId)} target="_blank" rel="noopener">Apri la cartella</a>`}
+        ${sospesi.length > 0 && html`<button class="btn small primary" disabled=${stato.busy || !online} onClick=${salvaTutti}>Salva ${sospesi.length} verbali in sospeso</button>`}
+        <button class="btn small ghost" onClick=${scollega}>Scollega</button>
+      </div>`
+    : html`
+      <p class="muted">Collega il tuo Google Drive: l'app creerà la cartella <b>${CARTELLA_PRINCIPALE}</b> con una sottocartella per ogni cantiere, e ci salverà ogni verbale in PDF e Word.</p>
+      <button class="btn primary" disabled=${stato.busy || !online} onClick=${collega}>Collega Google Drive</button>`}
+    ${stato.msg && html`<p class="hint">${stato.msg}</p>`}
+  </section>`;
 }
 
 // Anteprima del PDF disegnata con pdf.js, per vederlo anche dove il download non è consentito.
@@ -1440,6 +1532,7 @@ function Impostazioni() {
       <p class="hint">Si può riutilizzare nei verbali con «Usa firma salvata».</p>
       <${Firma} value=${s.firma} onChange=${x => set({ ...s, firma: x })} />
     </section>
+    <${DriveImpostazioni} />
     <section class="card">
       <h3>Backup</h3>
       ${PROVA && html`<div class="banner warn">Nella versione di prova il backup non si può salvare: funziona nell'app installata.</div>`}

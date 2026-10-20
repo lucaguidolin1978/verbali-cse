@@ -399,6 +399,16 @@ h3 { font-size: 1.1rem; }
 .card.nc .nc-head .btn:not(.danger) { background: var(--surface); color: var(--text); }
 .card.nc.late { border-color: var(--red); border-width: 2px; }
 
+/* Google Drive nel verbale */
+.drive-box {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 14px; border-radius: 10px; background: var(--amber-soft); margin-bottom: 8px;
+}
+.drive-box.ok { background: var(--green-soft); }
+.drive-box > span { display: flex; flex-direction: column; min-width: 0; }
+.drive-box .btn { width: auto; margin: 0; }
+.drive-box .hint { flex-basis: 100%; margin: 0; }
+
 /* Navigazione inferiore */
 nav.bottom a { padding: 10px 2px; font-size: .8rem; }
 nav.bottom a.on { color: var(--accent); }

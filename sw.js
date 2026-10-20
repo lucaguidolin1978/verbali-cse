@@ -1,11 +1,11 @@
 // Service worker: permette l'uso completamente offline.
 // File dell'app: si prende la versione più recente quando c'è rete (entro 4 secondi),
 // altrimenti la copia salvata. Librerie esterne: sempre dalla copia salvata.
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE = 'verbali-cse-' + CACHE_VERSION;
 
 const APP = [
-  './', './index.html', './styles.css', './app.js', './db.js', './util.js', './checklist.js', './catalogo.js', './pdf.js', './logo.js',
+  './', './index.html', './styles.css', './app.js', './db.js', './util.js', './checklist.js', './catalogo.js', './pdf.js', './logo.js', './word.js', './drive.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
 ];
 const CDN = [
@@ -15,7 +15,8 @@ const CDN = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js'
 ];
 
 self.addEventListener('install', e => {

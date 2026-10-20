@@ -24,19 +24,19 @@ async function pdfMake() {
   return window.pdfMake;
 }
 
-const ESITO = { c: 'C', nc: 'NC', na: 'N.A.' };
-const TIPI = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lav. autonomo' };
+export const ESITO = { c: 'C', nc: 'NC', na: 'N.A.' };
+export const TIPI = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lav. autonomo' };
 const ACCENTO = '#c2410c';
 
-const testoNormativo = (s) =>
+export const testoNormativo = (s) =>
   `Il sottoscritto ${[s.titolo, s.nome].filter(Boolean).join(' ') || 'Coordinatore'}, in qualità di Coordinatore per la sicurezza in fase di esecuzione, nell'ambito dei compiti di cui all'art. 92, comma 1, lettera a) del D.Lgs. 9 aprile 2008 n. 81 e s.m.i., ha effettuato in data odierna visita in cantiere al fine di verificare, con opportune azioni di coordinamento e controllo, l'applicazione da parte delle imprese esecutrici e dei lavoratori autonomi delle disposizioni loro pertinenti contenute nel Piano di Sicurezza e Coordinamento e la corretta applicazione delle relative procedure di lavoro.`;
 
-const testoChiusura =
+export const testoChiusura =
   'Le imprese esecutrici e i lavoratori autonomi sono tenuti ad attuare le prescrizioni sopra riportate entro i termini indicati, dandone riscontro al CSE. ' +
   'L\'impresa affidataria verifica le condizioni di sicurezza dei lavori affidati e l\'applicazione delle disposizioni e prescrizioni del PSC (art. 97 D.Lgs. 81/2008). ' +
   'Il mancato adeguamento potrà essere segnalato al committente o al responsabile dei lavori ai sensi dell\'art. 92, comma 1, lettera e) del D.Lgs. 81/2008.';
 
-const testoGDPR = (s) =>
+export const testoGDPR = (s) =>
   `Informativa privacy: i dati personali e le immagini contenuti nel presente verbale sono trattati da ${[s.titolo, s.nome].filter(Boolean).join(' ') || 'il CSE'}, titolare del trattamento, esclusivamente per l'adempimento degli obblighi di cui al D.Lgs. 81/2008 (art. 6 par. 1 lett. c Reg. UE 2016/679) e conservati per il tempo previsto dalla normativa. Le fotografie documentano le condizioni del cantiere e non sono finalizzate all'identificazione delle persone. Gli interessati possono esercitare i diritti di cui agli artt. 15-22 del Regolamento contattando il titolare.`;
 
 const kv = (rows) => ({
@@ -46,8 +46,8 @@ const kv = (rows) => ({
 
 const sezione = (t) => ({ text: t.toUpperCase(), style: 'h2' });
 
-export async function generaPdf(verbaleId) {
-  const pm = await pdfMake();
+// Tutti i dati di un verbale, usati sia dal PDF sia dal Word.
+export async function caricaDati(verbaleId) {
   const v = await db.verbali.get(verbaleId);
   const bozza = v.stato !== 'chiuso';
   const rev = v.revisione ? ' – Rev. ' + v.revisione : '';
@@ -75,6 +75,16 @@ export async function generaPdf(verbaleId) {
 
   const cse = [s.titolo, s.nome].filter(Boolean).join(' ');
   const nomeImpresa = id => imprese[id]?.ragioneSociale || '—';
+  return { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa };
+}
+
+// Nome dei file del verbale (senza estensione), uguale per PDF e Word.
+export const nomeFileVerbale = (v, c) =>
+  `Verbale_sopralluogo_${v.stato !== 'chiuso' ? 'BOZZA' : v.numero + (v.revisione ? '_rev' + v.revisione : '')}_${slug(c.denominazione)}_${v.data}`;
+
+export async function generaPdf(verbaleId) {
+  const pm = await pdfMake();
+  const { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa } = await caricaDati(verbaleId);
   const content = [];
 
   // Intestazione
@@ -290,6 +300,6 @@ export async function generaPdf(verbaleId) {
   };
 
   const blob = await new Promise(res => pm.createPdf(dd).getBlob(res));
-  const nome = `Verbale_sopralluogo_${bozza ? 'BOZZA' : v.numero + (v.revisione ? '_rev' + v.revisione : '')}_${slug(c.denominazione)}_${v.data}.pdf`;
+  const nome = nomeFileVerbale(v, c) + '.pdf';
   return new File([blob], nome, { type: 'application/pdf' });
 }

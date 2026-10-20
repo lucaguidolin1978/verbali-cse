@@ -83,7 +83,7 @@ export async function chiudiVerbale(verbaleId) {
       });
     }
     await db.nonConformita.where('verbaleId').equals(verbaleId).modify({ bozza: false });
-    await db.verbali.update(verbaleId, { stato: 'chiuso', numero, revisione, chiusoIl: Date.now() });
+    await db.verbali.update(verbaleId, { stato: 'chiuso', numero, revisione, chiusoIl: Date.now(), driveDaInviare: true });
   });
 }
 
