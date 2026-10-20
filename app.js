@@ -593,35 +593,80 @@ const IMPRESA_VUOTA = {
 // Ponte (Cloudflare Worker) verso il registro europeo VIES: vedi la cartella ponte-piva.
 const PONTE_PIVA = 'https://ponte-piva.luca-guidolin78.workers.dev/';
 
+// Controllo della cifra finale della partita IVA italiana.
+function pivaValida(p) {
+  if (!/^\d{11}$/.test(p)) return false;
+  let s = 0;
+  for (let k = 0; k < 11; k++) {
+    let n = Number(p[k]);
+    if (k % 2 === 1) { n *= 2; if (n > 9) n -= 9; }
+    s += n;
+  }
+  return s % 10 === 0;
+}
+
 function RicercaPiva({ impresa, onDati }) {
   const online = useOnline();
   const [stato, setStato] = useState({ busy: false, msg: '', tipo: '' });
-  const piva = (impresa.piva || '').replace(/\s/g, '');
+  const [diversi, setDiversi] = useState(null);
+  const piva = (impresa.piva || '').replace(/[\s.]/g, '').replace(/^IT/i, '');
+  const cercata = useRef(piva); // all'apertura di un'impresa già salvata non si cerca di nuovo
+  const ultimo = useRef(impresa); ultimo.current = impresa;
+
   const cerca = async () => {
-    setStato({ busy: true, msg: 'Cerco nel registro europeo delle partite IVA…', tipo: 'info' });
+    cercata.current = piva;
+    setDiversi(null);
+    setStato({ busy: true, msg: 'Cerco i dati dell\'impresa nel registro europeo delle partite IVA…', tipo: 'info' });
     try {
       const r = await fetch(`${PONTE_PIVA}?piva=${encodeURIComponent(piva)}`);
       const d = await r.json();
-      if (!d.valida) { setStato({ busy: false, msg: d.errore || 'Partita IVA non trovata.', tipo: 'warn' }); return; }
-      const sostituisci = !impresa.ragioneSociale.trim() || impresa.ragioneSociale.trim().toLowerCase() === d.nome.toLowerCase()
-        || await chiedi(`Trovata: ${d.nome}. Sostituire la ragione sociale «${impresa.ragioneSociale}»?`, 'Sostituisci');
-      onDati({ ...(sostituisci && d.nome ? { ragioneSociale: d.nome } : {}), ...(d.indirizzo ? { sede: d.indirizzo } : {}) });
-      setStato({ busy: false, msg: `Dati caricati: ${d.nome}${d.indirizzo ? ' – ' + d.indirizzo : ''}. Controllali e premi Salva.`, tipo: 'ok' });
+      if (!d.valida) { setStato({ busy: false, msg: (d.errore || 'Partita IVA non trovata.') + ' Puoi inserire i dati a mano.', tipo: 'warn' }); return; }
+      const cur = ultimo.current;
+      // Si compilano da soli i campi vuoti; quelli già scritti con un valore diverso si propongono.
+      const patch = {}, conflitti = {};
+      [['ragioneSociale', d.nome], ['sede', d.indirizzo]].forEach(([k, val]) => {
+        if (!val) return;
+        const att = (cur[k] || '').trim();
+        if (!att) patch[k] = val;
+        else if (att.toLowerCase() !== val.toLowerCase()) conflitti[k] = val;
+      });
+      if (Object.keys(patch).length) onDati(patch);
+      setDiversi(Object.keys(conflitti).length ? conflitti : null);
+      setStato({ busy: false, msg: `Trovata: ${d.nome}${d.indirizzo ? ' – ' + d.indirizzo : ''}. Controlla i dati e premi Salva.`, tipo: 'ok' });
     } catch {
-      setStato({ busy: false, msg: 'Ricerca non riuscita: controlla la connessione e riprova.', tipo: 'warn' });
+      setStato({ busy: false, msg: 'Ricerca non riuscita: controlla la connessione e riprova, oppure inserisci i dati a mano.', tipo: 'warn' });
     }
   };
+
+  // Ricerca automatica appena la P.IVA è completa e corretta.
+  useEffect(() => {
+    if (!PONTE_PIVA || PROVA || !online || piva === cercata.current) return;
+    if (pivaValida(piva)) cerca();
+    else if (/^\d{11}$/.test(piva)) setStato({ busy: false, msg: 'Partita IVA non corretta: controlla le cifre.', tipo: 'warn' });
+    else if (stato.msg) setStato({ busy: false, msg: '', tipo: '' });
+  }, [piva, online]);
+
   const nome = impresa.ragioneSociale.trim();
+  const NOMI = { ragioneSociale: 'Ragione sociale', sede: 'Sede' };
   return html`<div class="ricerca-piva">
+    ${stato.msg && html`<div class=${'banner ' + (stato.tipo === 'warn' ? 'warn' : 'info')}>${stato.msg}</div>`}
+    ${diversi && html`<div class="banner warn">
+      <p>Nel registro risultano dati diversi da quelli inseriti:</p>
+      <ul>${Object.entries(diversi).map(([k, val]) => html`<li><b>${NOMI[k]}:</b> ${val}</li>`)}</ul>
+      <div class="row-btns">
+        <button type="button" class="btn small primary" onClick=${() => { onDati(diversi); setDiversi(null); }}>Usa i dati del registro</button>
+        <button type="button" class="btn small ghost" onClick=${() => setDiversi(null)}>Tieni i miei</button>
+      </div>
+    </div>`}
     <div class="row-btns">
-      ${PONTE_PIVA && html`<button type="button" class="btn small primary" disabled=${!online || stato.busy || piva.length < 11} onClick=${cerca}
-        title=${!online ? 'Serve la connessione internet' : piva.length < 11 ? 'Inserisci la partita IVA (11 cifre)' : ''}>
-        ${stato.busy ? 'Cerco…' : 'Carica dati da P.IVA'}</button>`}
+      ${PONTE_PIVA && !PROVA && pivaValida(piva) && html`<button type="button" class="btn small ghost" disabled=${!online || stato.busy} onClick=${cerca}>
+        ${stato.busy ? 'Cerco…' : 'Ricarica dati da P.IVA'}</button>`}
       ${nome && html`<a class="btn small ghost" target="_blank" rel="noopener"
         href=${'https://www.google.com/search?q=' + encodeURIComponent(nome + ' partita iva sede')}>Cerca P.IVA per nome</a>`}
+      <a class="btn small ghost" target="_blank" rel="noopener" href="https://www.inipec.gov.it/cerca-pec/-/pecs/companies">Cerca PEC su INI-PEC</a>
     </div>
-    ${!online && html`<small class="hint">Senza connessione la ricerca non è disponibile.</small>`}
-    ${stato.msg && html`<div class=${'banner ' + (stato.tipo === 'warn' ? 'warn' : 'info')}>${stato.msg}</div>`}
+    ${!online && html`<small class="hint">Senza connessione i dati non si caricano da soli: inseriscili a mano.</small>`}
+    ${pivaValida(piva) && html`<small class="hint">Email e PEC non sono nel registro europeo: cercale su INI-PEC (inserisci la P.IVA ${piva}) e incollale qui sotto.</small>`}
   </div>`;
 }
 
@@ -653,7 +698,7 @@ function ImpresaForm({ id }) {
     <section class="card">
       <div class="grid2">${f('piva', 'Partita IVA', { inputmode: 'numeric', placeholder: '11 cifre' })}
         ${f('tipo', 'Tipo', { options: Object.entries(TIPI_IMPRESA) })}</div>
-      <${RicercaPiva} impresa=${i} onDati=${d => set({ ...i, ...d })} />
+      <${RicercaPiva} impresa=${i} onDati=${d => { setI(cur => ({ ...cur, ...d })); setDirty(true); }} />
       ${f('ragioneSociale', 'Ragione sociale / nominativo')}
       <${IndirizzoAuto} via=${i.sede} etichetta="Sede legale" unico
         onChange=${via => set({ ...i, sede: via })} />
