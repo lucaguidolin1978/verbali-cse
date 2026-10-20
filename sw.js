@@ -1,6 +1,7 @@
-// Service worker: mette in cache l'app e le librerie per l'uso completamente offline.
-// A ogni modifica dei file dell'app, incrementare CACHE_VERSION.
-const CACHE_VERSION = 'v2';
+// Service worker: permette l'uso completamente offline.
+// File dell'app: si prende la versione più recente quando c'è rete (entro 4 secondi),
+// altrimenti la copia salvata. Librerie esterne: sempre dalla copia salvata.
+const CACHE_VERSION = 'v3';
 const CACHE = 'verbali-cse-' + CACHE_VERSION;
 
 const APP = [
@@ -20,14 +21,15 @@ const CDN = [
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
     const c = await caches.open(CACHE);
-    await c.addAll(APP);
+    await c.addAll(APP.map(u => new Request(u, { cache: 'reload' })));
+    // Le librerie esterne: un errore su una non blocca l'installazione.
     await Promise.all(CDN.map(async u => {
-      const r = await fetch(u, { mode: 'cors' });
-      if (!r.ok) throw new Error('Download fallito: ' + u);
-      await c.put(u, r);
+      try {
+        const r = await fetch(u, { mode: 'cors' });
+        if (r.ok) await c.put(u, r);
+      } catch { /* verrà riprovata al primo utilizzo */ }
     }));
-    // Alla prima installazione si attiva subito; gli aggiornamenti attendono la conferma dell'utente.
-    if (!self.registration.active) self.skipWaiting();
+    self.skipWaiting();
   })());
 });
 
@@ -42,17 +44,34 @@ self.addEventListener('message', e => {
   if (e.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
+async function retePrima(req) {
+  const c = await caches.open(CACHE);
+  try {
+    const r = await Promise.race([
+      fetch(req, { cache: 'no-cache' }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))
+    ]);
+    if (r.ok) c.put(req, r.clone());
+    return r;
+  } catch (err) {
+    const cached = await c.match(req, { ignoreSearch: true });
+    if (cached) return cached;
+    if (req.mode === 'navigate') return c.match('./index.html');
+    throw err;
+  }
+}
+
+async function cachePrima(req) {
+  const cached = await caches.match(req, { ignoreSearch: true });
+  if (cached) return cached;
+  const r = await fetch(req);
+  if (r.ok && (r.type === 'cors' || r.type === 'basic')) (await caches.open(CACHE)).put(req, r.clone());
+  return r;
+}
+
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  e.respondWith((async () => {
-    const cached = await caches.match(req, { ignoreSearch: true });
-    if (cached) return cached;
-    try {
-      return await fetch(req);
-    } catch (err) {
-      if (req.mode === 'navigate') return caches.match('./index.html');
-      throw err;
-    }
-  })());
+  const stessoSito = new URL(req.url).origin === self.location.origin;
+  e.respondWith(stessoSito ? retePrima(req) : cachePrima(req));
 });

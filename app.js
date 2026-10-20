@@ -355,16 +355,16 @@ async function caricaEsempio() {
   await db.cantiereImprese.bulkAdd([{ cantiereId: cid, impresaId: i1 }, { cantiereId: cid, impresaId: i2 }]);
 }
 
-async function nuovoSopralluogo(cantiereId) {
+async function nuovoSopralluogo(cantiereId, passo = 0) {
   const esistente = await db.verbali.where('cantiereId').equals(cantiereId).filter(v => v.stato === 'bozza').first();
-  if (esistente) { go(`/sopralluogo/${esistente.id}/0`); return; }
+  if (esistente) { go(`/sopralluogo/${esistente.id}/${passo}`); return; }
   const imprese = await impreseDelCantiere(cantiereId);
   const id = await db.verbali.add({
     cantiereId, stato: 'bozza', data: oggiISO(), oraInizio: oraHHMM(), oraFine: '', meteo: '', fase: '',
     presenze: imprese.map(i => ({ impresaId: i.id, presente: false, addetti: '' })),
     persone: [], esiti: {}, verificheNC: {}, osservazioni: '', sospensione: '', firmaCSE: null, creato: Date.now()
   });
-  go(`/sopralluogo/${id}/0`);
+  go(`/sopralluogo/${id}/${passo}`);
 }
 
 // ---------- Cantieri ----------
@@ -1027,6 +1027,14 @@ function RegistroNC({ filtro }) {
   return html`<${Header} title="Registro non conformità" />
   <main>
     <${SchedeNC} attiva="registro" />
+    <section class="card">
+      <p class="muted">Le non conformità si registrano dentro un sopralluogo, così finiscono nel verbale con data, firme e foto.</p>
+      ${cantieri.filter(c => c.stato !== 'chiuso').length
+        ? html`<div class="row-btns">${cantieri.filter(c => c.stato !== 'chiuso').map(c => html`
+            <button class="btn primary" onClick=${() => nuovoSopralluogo(c.id, 4)}>
+              <${Icon} d=${I.plus} size=${18} /> Aggiungi NC – ${c.denominazione}</button>`)}</div>`
+        : html`<a class="btn primary" href="#/cantieri/nuovo">Crea prima un cantiere</a>`}
+    </section>
     <section class="card filters">
       <div class="grid2">
         ${b('cantiere', 'Cantiere', { options: [['', 'Tutti'], ...cantieri.map(c => [String(c.id), c.denominazione])] })}
@@ -1097,6 +1105,12 @@ function Impostazioni() {
       setMsg('Backup ripristinato.');
     } catch (err) { avviso('Impossibile ripristinare: ' + err.message); }
   };
+  const ripara = async () => {
+    if (!await chiedi('Riparare l\'app? Scarico di nuovo l\'ultima versione. I tuoi cantieri, imprese e verbali non vengono toccati. Serve la connessione internet.', 'Ripara')) return;
+    for (const r of await navigator.serviceWorker?.getRegistrations?.() || []) await r.unregister();
+    for (const k of await caches.keys()) await caches.delete(k);
+    location.reload();
+  };
   const chiediPersist = async () => setPersist(await navigator.storage?.persist?.());
 
   return html`<${Header} title="Impostazioni">
@@ -1136,6 +1150,11 @@ function Impostazioni() {
       <p class="hint">Archiviazione protetta dal browser: <b>${persist === null ? 'non disponibile' : persist ? 'attiva' : 'non attiva'}</b>
         ${persist === false && html` <button class="btn small ghost" onClick=${chiediPersist}>Attiva</button>`}</p>
     </section>
+    ${!PROVA && html`<section class="card">
+      <h3>Problemi con l'app?</h3>
+      <p class="muted">Se un pulsante non risponde o l'app sembra vecchia, scarica di nuovo l'ultima versione. I dati restano.</p>
+      <button class="btn" onClick=${ripara}>Ripara app</button>
+    </section>`}
   </main>`;
 }
 
@@ -1148,21 +1167,11 @@ function Nav({ attivo }) {
 
 function App() {
   const r = useRoute();
-  const [aggiornamento, setAggiornamento] = useState(null);
   useEffect(() => {
     navigator.storage?.persist?.()?.catch?.(() => {});
     if (PROVA || !('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('./sw.js').catch(() => null).then(reg => {
-      if (!reg) return;
-      const check = w => w && w.addEventListener('statechange', () => {
-        if (w.state === 'installed' && navigator.serviceWorker.controller) setAggiornamento(w);
-      });
-      if (reg.waiting && navigator.serviceWorker.controller) setAggiornamento(reg.waiting);
-      reg.addEventListener('updatefound', () => check(reg.installing));
-    });
-    // Ricarica solo dopo un aggiornamento, non alla prima installazione.
-    let ricaricato = !navigator.serviceWorker.controller;
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!ricaricato) { ricaricato = true; location.reload(); } });
+    // Con la rete il service worker prende sempre i file più recenti: gli aggiornamenti arrivano da soli.
+    navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => {});
   }, []);
 
   const [sez, a, b] = r;
@@ -1176,9 +1185,7 @@ function App() {
   else if (sez === 'impostazioni') page = html`<${Impostazioni} />`;
   else page = html`<${Home} />`;
 
-  return html`${aggiornamento && html`<div class="update">Nuova versione disponibile
-      <button class="btn small primary" onClick=${() => aggiornamento.postMessage('SKIP_WAITING')}>Aggiorna</button></div>`}
-    ${page}
+  return html`${page}
     <${Dialogo} />
     ${sez !== 'sopralluogo' && html`<${Nav} attivo=${sez === 'verbale' ? 'cantieri' : sez === 'catalogo' ? 'nc' : (sez || '')} />`}`;
 }
