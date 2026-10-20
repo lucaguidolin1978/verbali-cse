@@ -128,8 +128,9 @@ function Field({ label, value, onInput, type = 'text', rows, mic, options, hint,
 }
 
 // Restituisce una funzione che genera campi collegati a un oggetto di stato.
+// L'aggiornamento parte sempre dallo stato più recente, così modifiche rapide su più campi non si perdono.
 const binder = (obj, set) => (key, label, opts = {}) =>
-  html`<${Field} label=${label} value=${obj[key]} onInput=${val => set({ ...obj, [key]: val })} ...${opts} />`;
+  html`<${Field} label=${label} value=${obj[key]} onInput=${val => set(cur => ({ ...cur, [key]: val }))} ...${opts} />`;
 
 function Firma({ value, onChange, altezza = 170 }) {
   const cv = useRef(); const pad = useRef(); const ultimo = useRef(value);
@@ -252,7 +253,8 @@ function IndirizzoAuto({ via, comune, onChange, etichetta = 'Indirizzo (via, pia
     ultimoTesto.current = testo;
     timer.current = setTimeout(async () => {
       try {
-        const s = await cercaIndirizzi(testo + (!unico && comune ? ' ' + comune : ''));
+        // Si cerca solo ciò che si sta scrivendo: il comune già inserito potrebbe essere quello vecchio.
+        const s = await cercaIndirizzi(testo);
         if (ultimoTesto.current === testo) setSugg(s);
       } catch { setSugg([]); }
     }, 450);
@@ -1053,7 +1055,7 @@ function PassoFirme({ v, upd, flush, vid, imprese }) {
     if (!v.firmaCSE) e.push('Manca la firma del CSE.');
     setErrori(e);
     if (e.length) return;
-    if (!await chiedi('Chiudere il verbale? Dopo la chiusura non sarà più modificabile.')) return;
+    if (!await chiedi('Chiudere il verbale? Dopo la chiusura si potrà modificare solo creando una revisione (Rev. 1, Rev. 2…).')) return;
     if (!v.oraFine) upd({ oraFine: oraHHMM() });
     await flush();
     await chiudiVerbale(vid);
