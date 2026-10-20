@@ -1,7 +1,7 @@
 // Service worker: permette l'uso completamente offline.
 // File dell'app: si prende la versione più recente quando c'è rete (entro 4 secondi),
 // altrimenti la copia salvata. Librerie esterne: sempre dalla copia salvata.
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v5';
 const CACHE = 'verbali-cse-' + CACHE_VERSION;
 
 const APP = [
@@ -61,17 +61,20 @@ async function retePrima(req) {
   }
 }
 
+// Solo le librerie dell'elenco CDN: indirizzi esatti, senza ignorare i parametri.
 async function cachePrima(req) {
-  const cached = await caches.match(req, { ignoreSearch: true });
+  const cached = await caches.match(req.url);
   if (cached) return cached;
   const r = await fetch(req);
-  if (r.ok && (r.type === 'cors' || r.type === 'basic')) (await caches.open(CACHE)).put(req, r.clone());
+  if (r.ok) (await caches.open(CACHE)).put(req.url, r.clone());
   return r;
 }
 
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  const stessoSito = new URL(req.url).origin === self.location.origin;
-  e.respondWith(stessoSito ? retePrima(req) : cachePrima(req));
+  const url = new URL(req.url);
+  if (url.origin === self.location.origin) e.respondWith(retePrima(req));
+  else if (CDN.includes(url.origin + url.pathname)) e.respondWith(cachePrima(req));
+  // Tutto il resto (indirizzi, partite IVA) va sempre in rete, senza cache.
 });

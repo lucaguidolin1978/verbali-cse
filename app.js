@@ -1,7 +1,7 @@
 import { html, render, useState, useEffect, useRef, useMemo, useCallback } from 'https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.module.js';
 import {
   db, liveQuery, getImpostazioni, salvaImpostazioni, impreseDelCantiere, ncApertePrecedenti,
-  eliminaVerbaleBozza, chiudiVerbale, creaBackup, ripristinaBackup
+  eliminaVerbaleBozza, chiudiVerbale, creaBackup, ripristinaBackup, puoRiaprire, riapriVerbale
 } from './db.js';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
@@ -192,6 +192,107 @@ function Foto({ match, readOnly }) {
       <${Icon} d=${I.cam} /><span>${busy ? 'Salvo…' : 'Foto'}</span>
       <input type="file" accept="image/*" multiple onChange=${aggiungi} hidden />
     </label>`}
+  </div>`;
+}
+
+// ---------- Indirizzi: suggerimenti (Photon) e posizione GPS (Nominatim), dati OpenStreetMap ----------
+
+let ultimaPosizione = null; // per proporre prima le vie vicine
+
+async function cercaIndirizzi(testo) {
+  const vicino = ultimaPosizione ? `&lat=${ultimaPosizione.lat}&lon=${ultimaPosizione.lon}` : '&lat=42.5&lon=12.5';
+  // Il civico si cerca a parte: il servizio trova meglio la via senza numero.
+  const civico = (testo.match(/\b(\d{1,4}(?:\/?[a-z])?)\b/i) || [])[1] || '';
+  const q = civico ? testo.replace(civico, ' ').replace(/\s+/g, ' ').trim() : testo;
+  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8${vicino}`);
+  const d = await r.json();
+  return (d.features || []).map(f => f.properties).filter(p => p.countrycode === 'IT' || p.country === 'Italia').map(p => {
+    const strada = p.type === 'street' || p.osm_key === 'highway' ? p.name : (p.street || p.name);
+    const nr = p.housenumber || civico;
+    return {
+      via: [strada, nr].filter(Boolean).join(' '),
+      comune: [p.postcode, p.city || p.town || p.village || p.name].filter(Boolean).join(' ') + (p.county && p.county !== (p.city || '') ? ` (${p.county})` : ''),
+      extra: p.type !== 'street' && p.osm_key !== 'highway' && p.street ? p.name : ''
+    };
+  }).filter((s, i, a) => s.via && a.findIndex(x => (x.via + x.comune).toLowerCase() === (s.via + s.comune).toLowerCase()) === i)
+    .slice(0, 6);
+}
+
+async function indirizzoDaPosizione() {
+  const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }));
+  const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+  ultimaPosizione = { lat, lon };
+  const coordinate = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  if (!navigator.onLine) return { coordinate, accuracy };
+  const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&addressdetails=1&accept-language=it`);
+  const a = (await r.json()).address || {};
+  const prov = (a['ISO3166-2-lvl6'] || '').replace('IT-', '');
+  return {
+    coordinate, accuracy,
+    via: [a.road || a.pedestrian || a.square || a.hamlet, a.house_number].filter(Boolean).join(' '),
+    comune: [a.postcode, a.city || a.town || a.village || a.municipality].filter(Boolean).join(' ') + (prov ? ` (${prov})` : '')
+  };
+}
+
+function IndirizzoAuto({ via, comune, onChange, etichetta = 'Indirizzo (via, piazza…)', unico }) {
+  const online = useOnline();
+  const [sugg, setSugg] = useState([]);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const timer = useRef(null);
+  const ultimoTesto = useRef('');
+  const disponibile = !PROVA && online;
+  // Con un solo campo (es. sede dell'impresa) via e comune vengono uniti.
+  const emetti = (v, c, coord) => unico ? onChange([v, c].filter(Boolean).join(', ')) : onChange(v, c, coord);
+
+  const scrivi = testo => {
+    unico ? onChange(testo) : onChange(testo, comune);
+    clearTimeout(timer.current);
+    if (!disponibile || testo.trim().length < 4) { setSugg([]); return; }
+    ultimoTesto.current = testo;
+    timer.current = setTimeout(async () => {
+      try {
+        const s = await cercaIndirizzi(testo + (!unico && comune ? ' ' + comune : ''));
+        if (ultimoTesto.current === testo) setSugg(s);
+      } catch { setSugg([]); }
+    }, 450);
+  };
+  const scegli = s => { setSugg([]); emetti(s.via, s.comune); };
+  const posizione = async () => {
+    if (!navigator.geolocation) { setMsg('Questo dispositivo non fornisce la posizione.'); return; }
+    setBusy(true); setMsg('Rilevo la posizione…');
+    try {
+      const p = await indirizzoDaPosizione();
+      if (p.via || p.comune) {
+        emetti(p.via || via, p.comune || comune, p.coordinate);
+        setMsg(`Indirizzo proposto dalla posizione (precisione circa ${Math.round(p.accuracy)} m). Controllalo e correggi il civico se serve.`);
+      } else {
+        if (!unico) onChange(via, comune, p.coordinate);
+        setMsg(`Senza connessione non trovo l'indirizzo: ${unico ? '' : 'ho salvato le coordinate GPS. '}Scrivilo a mano.`);
+      }
+    } catch (e) {
+      setMsg(e.code === 1 ? 'Permesso di posizione negato: attivalo nelle impostazioni di Chrome per questo sito.' : 'Posizione non disponibile: riprova all\'aperto o scrivi l\'indirizzo a mano.');
+    } finally { setBusy(false); }
+  };
+
+  return html`<div class="indirizzo-auto">
+    <div class=${unico ? '' : 'grid2'}>
+      <div class="sugg-wrap">
+        <${Field} label=${etichetta} value=${via} onInput=${scrivi} autocomplete="off"
+          onBlur=${() => setTimeout(() => setSugg([]), 200)} />
+        ${sugg.length > 0 && html`<ul class="sugg" role="listbox">
+          ${sugg.map(s => html`<li role="option"><button type="button" onMouseDown=${e => e.preventDefault()} onClick=${() => scegli(s)}>
+            <b>${s.via}</b>${s.extra && html` <small>${s.extra}</small>`}<small>${s.comune}</small></button></li>`)}
+        </ul>`}
+      </div>
+      ${!unico && html`<${Field} label="Comune" value=${comune} onInput=${x => onChange(via, x)} placeholder="CAP Comune (PR)" />`}
+    </div>
+    ${!PROVA && html`<div class="row-btns">
+      <button type="button" class="btn small" disabled=${busy} onClick=${posizione}>
+        ${busy ? 'Rilevo…' : 'Usa la mia posizione'}</button>
+      ${!online && html`<small class="hint">Senza connessione niente suggerimenti: scrivi l'indirizzo a mano.</small>`}
+    </div>`}
+    ${msg && html`<div class="banner info">${msg}</div>`}
   </div>`;
 }
 
@@ -389,7 +490,7 @@ function CantieriList() {
 const CANTIERE_VUOTO = {
   denominazione: '', indirizzo: '', comune: '', committente: '', committenteEmail: '', rl: '', rlEmail: '',
   csp: '', cse: '', dl: '', dlEmail: '', notificaNumero: '', notificaData: '', titoloAbilitativo: '',
-  dataInizio: '', dataFine: '', importo: '', stato: 'attivo'
+  dataInizio: '', dataFine: '', importo: '', stato: 'attivo', coordinate: ''
 };
 
 function CantiereForm({ id }) {
@@ -431,7 +532,9 @@ function CantiereForm({ id }) {
     <section class="card">
       <h3>Dati del cantiere</h3>
       ${f('denominazione', 'Denominazione / oggetto dei lavori')}
-      <div class="grid2">${f('indirizzo', 'Indirizzo')}${f('comune', 'Comune')}</div>
+      <${IndirizzoAuto} via=${c.indirizzo} comune=${c.comune}
+        onChange=${(via, comune, coordinate) => set({ ...c, indirizzo: via, comune, ...(coordinate ? { coordinate } : {}) })} />
+      ${f('coordinate', 'Coordinate GPS (per i soccorsi)', { placeholder: 'es. 45.66690, 12.24300', hint: 'Si compilano con «Usa la mia posizione»; utili da comunicare al 112.' })}
       <div class="grid2">${f('notificaNumero', 'N. notifica preliminare (art. 99)')}${f('notificaData', 'Data notifica', { type: 'date' })}</div>
       ${f('titoloAbilitativo', 'Titolo abilitativo (PdC, SCIA…)')}
       <div class="grid2">${f('dataInizio', 'Inizio lavori', { type: 'date' })}${f('dataFine', 'Fine presunta', { type: 'date' })}</div>
@@ -483,9 +586,44 @@ function ImpreseList() {
 }
 
 const IMPRESA_VUOTA = {
-  ragioneSociale: '', piva: '', tipo: 'esecutrice', email: '', pec: '', datoreLavoro: '', rspp: '', preposto: '',
+  ragioneSociale: '', piva: '', sede: '', tipo: 'esecutrice', email: '', pec: '', datoreLavoro: '', rspp: '', preposto: '',
   referente: '', telefono: '', posRicevuto: '', posVerificato: ''
 };
+
+// Ponte (Cloudflare Worker) verso il registro europeo VIES: vedi la cartella ponte-piva.
+const PONTE_PIVA = 'https://ponte-piva.luca-guidolin78.workers.dev/';
+
+function RicercaPiva({ impresa, onDati }) {
+  const online = useOnline();
+  const [stato, setStato] = useState({ busy: false, msg: '', tipo: '' });
+  const piva = (impresa.piva || '').replace(/\s/g, '');
+  const cerca = async () => {
+    setStato({ busy: true, msg: 'Cerco nel registro europeo delle partite IVA…', tipo: 'info' });
+    try {
+      const r = await fetch(`${PONTE_PIVA}?piva=${encodeURIComponent(piva)}`);
+      const d = await r.json();
+      if (!d.valida) { setStato({ busy: false, msg: d.errore || 'Partita IVA non trovata.', tipo: 'warn' }); return; }
+      const sostituisci = !impresa.ragioneSociale.trim() || impresa.ragioneSociale.trim().toLowerCase() === d.nome.toLowerCase()
+        || await chiedi(`Trovata: ${d.nome}. Sostituire la ragione sociale «${impresa.ragioneSociale}»?`, 'Sostituisci');
+      onDati({ ...(sostituisci && d.nome ? { ragioneSociale: d.nome } : {}), ...(d.indirizzo ? { sede: d.indirizzo } : {}) });
+      setStato({ busy: false, msg: `Dati caricati: ${d.nome}${d.indirizzo ? ' – ' + d.indirizzo : ''}. Controllali e premi Salva.`, tipo: 'ok' });
+    } catch {
+      setStato({ busy: false, msg: 'Ricerca non riuscita: controlla la connessione e riprova.', tipo: 'warn' });
+    }
+  };
+  const nome = impresa.ragioneSociale.trim();
+  return html`<div class="ricerca-piva">
+    <div class="row-btns">
+      ${PONTE_PIVA && html`<button type="button" class="btn small primary" disabled=${!online || stato.busy || piva.length < 11} onClick=${cerca}
+        title=${!online ? 'Serve la connessione internet' : piva.length < 11 ? 'Inserisci la partita IVA (11 cifre)' : ''}>
+        ${stato.busy ? 'Cerco…' : 'Carica dati da P.IVA'}</button>`}
+      ${nome && html`<a class="btn small ghost" target="_blank" rel="noopener"
+        href=${'https://www.google.com/search?q=' + encodeURIComponent(nome + ' partita iva sede')}>Cerca P.IVA per nome</a>`}
+    </div>
+    ${!online && html`<small class="hint">Senza connessione la ricerca non è disponibile.</small>`}
+    ${stato.msg && html`<div class=${'banner ' + (stato.tipo === 'warn' ? 'warn' : 'info')}>${stato.msg}</div>`}
+  </div>`;
+}
 
 function ImpresaForm({ id }) {
   const nuova = id === 'nuova';
@@ -513,9 +651,12 @@ function ImpresaForm({ id }) {
   <//>
   <main>
     <section class="card">
-      ${f('ragioneSociale', 'Ragione sociale / nominativo')}
-      <div class="grid2">${f('piva', 'P.IVA / C.F.')}
+      <div class="grid2">${f('piva', 'Partita IVA', { inputmode: 'numeric', placeholder: '11 cifre' })}
         ${f('tipo', 'Tipo', { options: Object.entries(TIPI_IMPRESA) })}</div>
+      <${RicercaPiva} impresa=${i} onDati=${d => set({ ...i, ...d })} />
+      ${f('ragioneSociale', 'Ragione sociale / nominativo')}
+      <${IndirizzoAuto} via=${i.sede} etichetta="Sede legale" unico
+        onChange=${via => set({ ...i, sede: via })} />
       <div class="grid2">${f('email', 'Email', { type: 'email' })}${f('pec', 'PEC', { type: 'email' })}</div>
     </section>
     <section class="card">
@@ -569,8 +710,11 @@ function Sopralluogo({ id, step }) {
   const vai = async n => { await flush(); go(`/sopralluogo/${vid}/${n}`); };
   const esci = async () => { await flush(); go('/'); };
   const eliminaBozza = async () => {
-    if (!await chiedi('Eliminare questa bozza di sopralluogo con foto e NC inserite?')) return;
-    await eliminaVerbaleBozza(vid); go('/');
+    const testo = v.numero
+      ? `Eliminare definitivamente il verbale n. ${v.numero} con le sue foto e non conformità? L'operazione non si può annullare.`
+      : 'Eliminare questa bozza di sopralluogo con foto e NC inserite?';
+    if (!await chiedi(testo, 'Elimina')) return;
+    await eliminaVerbaleBozza(vid); go(`/cantieri/${v.cantiereId}`);
   };
   const ctx = { v, upd, flush, cantiere, imprese, vid };
   const Passo = [PassoIntestazione, PassoPresenze, PassoVerificaNC, PassoChecklist, PassoNC, PassoOsservazioni, PassoFirme][s];
@@ -578,8 +722,8 @@ function Sopralluogo({ id, step }) {
   return html`<div class="wizard">
     <header class="top">
       <button class="icon-btn" aria-label="Esci" onClick=${esci}><${Icon} d=${I.back} /></button>
-      <h1><small>Sopralluogo · ${cantiere.denominazione}</small>${PASSI[s]}</h1>
-      <div class="top-actions"><button class="btn small ghost danger" onClick=${eliminaBozza}>Elimina bozza</button></div>
+      <h1><small>${v.numero ? `Modifica verbale n. ${v.numero}` : 'Sopralluogo'} · ${cantiere.denominazione}</small>${PASSI[s]}</h1>
+      <div class="top-actions"><button class="btn small ghost danger" onClick=${eliminaBozza}>${v.numero ? 'Elimina verbale' : 'Elimina bozza'}</button></div>
     </header>
     <nav class="steps" aria-label="Passi">
       ${PASSI.map((p, i) => html`<button class=${i === s ? 'on' : i < s ? 'done' : ''} onClick=${() => vai(i)} aria-label=${p}>${i + 1}</button>`)}
@@ -837,7 +981,18 @@ function PassoFirme({ v, upd, flush, vid, imprese }) {
   const imp = useLive(() => getImpostazioni());
   const ncs = useLive(() => db.nonConformita.where('verbaleId').equals(vid).toArray(), [vid]);
   const [errori, setErrori] = useState([]);
+  const [bozzaPdf, setBozzaPdf] = useState(null);
+  const [busy, setBusy] = useState(false);
   if (!imp || !ncs) return null;
+  const anteprima = async () => {
+    setBusy(true);
+    try {
+      await flush();
+      const { generaPdf } = await import('./pdf.js');
+      setBozzaPdf(await generaPdf(vid));
+    } catch (e) { console.error(e); avviso('Errore nella generazione del PDF: ' + e.message); }
+    finally { setBusy(false); }
+  };
   const nomi = Object.fromEntries(imprese.map(i => [i.id, i.ragioneSociale]));
   const setPers = (idx, patch) => upd(cur => ({ ...cur, persone: cur.persone.map((p, i) => i === idx ? { ...p, ...patch } : p) }));
 
@@ -872,7 +1027,11 @@ function PassoFirme({ v, upd, flush, vid, imprese }) {
   </section>`)}
   ${!v.persone.length && html`<p class="hint">Nessuna persona presente indicata al passo 2: firmerà solo il CSE.</p>`}
   ${errori.length > 0 && html`<div class="banner danger"><b>Prima di chiudere:</b><ul>${errori.map(x => html`<li>${x}</li>`)}</ul></div>`}
-  <button class="btn primary big" onClick=${chiudi}>Chiudi verbale</button>`;
+  <button class="btn big" disabled=${busy} onClick=${anteprima}>${busy ? 'Genero l\'anteprima…' : 'Anteprima del verbale'}</button>
+  <button class="btn primary big" onClick=${chiudi}>Chiudi verbale</button>
+  ${bozzaPdf && html`<${AnteprimaPdf} file=${bozzaPdf} onClose=${() => setBozzaPdf(null)} azioni=${html`
+    <button class="btn ghost" onClick=${() => setBozzaPdf(null)}>Torna a modificare</button>
+    <button class="btn primary" onClick=${() => { setBozzaPdf(null); chiudi(); }}>Chiudi verbale</button>`} />`}`;
 }
 
 // ---------- Verbale chiuso ----------
@@ -910,12 +1069,32 @@ function VerbaleView({ id }) {
   const scaricaPdf = async () => { const f = await genera(); if (f) { scarica(f); setMsg('PDF salvato nei Download.'); } };
   const email = () => { location.href = mailtoVerbale(v, c, imprese); };
   const anteprima = async () => { const f = await genera(); if (f) setVedi(f); };
+  const modifica = async () => {
+    if (!await puoRiaprire(vid)) {
+      avviso('Questo verbale non si può modificare perché per il cantiere esiste già un sopralluogo successivo (anche in bozza).');
+      return;
+    }
+    if (!await chiedi(`Modificare il verbale n. ${v.numero}? Torna in bozza e, alla nuova chiusura, diventa la revisione ${(v.revisione || 0) + 1}. Se cambi il contenuto, fai firmare di nuovo i presenti e invia di nuovo il PDF.`, 'Modifica')) return;
+    await riapriVerbale(vid);
+    go(`/sopralluogo/${vid}/0`);
+  };
+  const elimina = async () => {
+    const successivi = !await puoRiaprire(vid);
+    const testo = `Eliminare definitivamente il verbale n. ${v.numero} insieme alle sue ${ncs.length} non conformità e alle foto? ` +
+      'Le NC dei verbali precedenti verificate in questo sopralluogo tornano aperte. ' +
+      (successivi ? 'Attenzione: esistono sopralluoghi successivi; le NC di questo verbale spariranno anche dalle loro verifiche. ' : '') +
+      'L\'operazione non si può annullare.';
+    if (!await chiedi(testo, 'Elimina')) return;
+    await riapriVerbale(vid);
+    await eliminaVerbaleBozza(vid);
+    go(`/cantieri/${c.id}`);
+  };
 
   const presenti = v.presenze.filter(p => p.presente);
   const nomi = Object.fromEntries(imprese.map(i => [i.id, i.ragioneSociale]));
   const contaEsiti = k => Object.values(v.esiti).filter(e => e.esito === k).length;
 
-  return html`<${Header} title=${`Verbale n. ${v.numero}`} back=${`/cantieri/${c.id}`} />
+  return html`<${Header} title=${`Verbale n. ${v.numero}${v.revisione ? ' – Rev. ' + v.revisione : ''}`} back=${`/cantieri/${c.id}`} />
   <main>
     <section class="card">
       <h3>${c.denominazione}</h3>
@@ -933,12 +1112,19 @@ function VerbaleView({ id }) {
         <button class="btn primary big" disabled=${busy} onClick=${anteprima}>${busy ? 'Genero il PDF…' : 'Vedi il PDF del verbale'}</button>
         <div class="banner warn">Versione di prova: qui il PDF si può solo vedere. Scaricarlo, condividerlo e inviarlo per email funziona nell'app installata sul tablet.</div>`
       : html`
-        <button class="btn primary big" disabled=${busy} onClick=${condividi}>${busy ? 'Genero il PDF…' : 'Condividi PDF'}</button>
-        <button class="btn" disabled=${busy} onClick=${anteprima}>Anteprima PDF</button>
+        <button class="btn primary big" disabled=${busy} onClick=${anteprima}>${busy ? 'Genero il PDF…' : 'Anteprima e invio'}</button>
+        <button class="btn" disabled=${busy} onClick=${condividi}>Condividi PDF</button>
         <button class="btn" disabled=${busy} onClick=${scaricaPdf}>Scarica PDF</button>
         <button class="btn" onClick=${email}>Email precompilata</button>`}
+      <div class="row-btns">
+        <button class="btn" onClick=${modifica}>Modifica verbale</button>
+        <button class="btn ghost danger" onClick=${elimina}>Elimina verbale</button>
+      </div>
       ${msg && html`<p class="hint">${msg}</p>`}
-      ${vedi && html`<${AnteprimaPdf} file=${vedi} onClose=${() => setVedi(null)} />`}
+      ${vedi && html`<${AnteprimaPdf} file=${vedi} onClose=${() => setVedi(null)} azioni=${PROVA ? null : html`
+        <button class="btn ghost" onClick=${() => setVedi(null)}>Chiudi</button>
+        <button class="btn" onClick=${email}>Email</button>
+        <button class="btn primary" onClick=${condividi}>Condividi PDF</button>`} />`}
       <div class="banner info">L'email si apre con destinatari, oggetto e testo: allega il PDF. Per la data certa
         firma digitalmente il PDF (PAdES) con il tuo software di firma e invialo via PEC.</div>
     </section>
@@ -948,7 +1134,7 @@ function VerbaleView({ id }) {
 // Anteprima del PDF disegnata con pdf.js, per vederlo anche dove il download non è consentito.
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 
-function AnteprimaPdf({ file, onClose }) {
+function AnteprimaPdf({ file, onClose, azioni }) {
   const box = useRef();
   const [stato, setStato] = useState('Preparo l\'anteprima…');
   useEffect(() => {
@@ -988,11 +1174,12 @@ function AnteprimaPdf({ file, onClose }) {
       <button class="icon-btn" aria-label="Chiudi" onClick=${onClose}><${Icon} d=${I.x} /></button>
     </header>
     ${stato && html`<p class="empty">${stato}</p>`}
-    <div class="pdf-pagine" ref=${box}></div>
+    <div class=${'pdf-pagine' + (azioni ? ' con-azioni' : '')} ref=${box}></div>
+    ${azioni && html`<footer class="wizard-nav pdf-azioni">${azioni}</footer>`}
   </div>`;
 }
 
-const oggettoEmail = (v, c) => `Verbale di sopralluogo n. ${v.numero} – ${c.denominazione} – ${fmtData(v.data)}`;
+const oggettoEmail = (v, c) => `Verbale di sopralluogo n. ${v.numero}${v.revisione ? ' Rev. ' + v.revisione : ''} – ${c.denominazione} – ${fmtData(v.data)}`;
 
 function mailtoVerbale(v, c, imprese) {
   const presenti = new Set(v.presenze.filter(p => p.presente).map(p => p.impresaId));

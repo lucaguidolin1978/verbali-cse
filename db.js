@@ -53,7 +53,9 @@ export async function chiudiVerbale(verbaleId) {
     const v = await db.verbali.get(verbaleId);
     const chiusi = await db.verbali.where('cantiereId').equals(v.cantiereId)
       .filter(x => x.stato === 'chiuso').toArray();
-    const numero = chiusi.reduce((m, x) => Math.max(m, x.numero || 0), 0) + 1;
+    // Un verbale riaperto per modifica mantiene il suo numero e passa alla revisione successiva.
+    const numero = v.numero || chiusi.reduce((m, x) => Math.max(m, x.numero || 0), 0) + 1;
+    const revisione = v.numero ? (v.revisione || 0) + 1 : 0;
     // Applica gli esiti delle verifiche delle NC precedenti.
     for (const [ncId, ver] of Object.entries(v.verificheNC || {})) {
       if (!ver.esito) continue;
@@ -67,7 +69,32 @@ export async function chiudiVerbale(verbaleId) {
       });
     }
     await db.nonConformita.where('verbaleId').equals(verbaleId).modify({ bozza: false });
-    await db.verbali.update(verbaleId, { stato: 'chiuso', numero, chiusoIl: Date.now() });
+    await db.verbali.update(verbaleId, { stato: 'chiuso', numero, revisione, chiusoIl: Date.now() });
+  });
+}
+
+// Un verbale si può modificare solo se è l'ultimo del cantiere (nessun sopralluogo successivo).
+export async function puoRiaprire(verbaleId) {
+  const v = await db.verbali.get(verbaleId);
+  const altri = await db.verbali.where('cantiereId').equals(v.cantiereId)
+    .filter(x => x.id !== verbaleId && (x.stato === 'bozza' || (x.numero || 0) > v.numero)).count();
+  return altri === 0;
+}
+
+export async function riapriVerbale(verbaleId) {
+  await db.transaction('rw', db.verbali, db.nonConformita, async () => {
+    const v = await db.verbali.get(verbaleId);
+    // Annulla gli esiti di verifica che questo verbale aveva applicato alle NC precedenti.
+    for (const ncId of Object.keys(v.verificheNC || {})) {
+      const nc = await db.nonConformita.get(Number(ncId));
+      if (!nc) continue;
+      const verifiche = (nc.verifiche || []).filter(x => x.verbaleId !== verbaleId);
+      const patch = { verifiche, stato: verifiche.length ? verifiche[verifiche.length - 1].esito : 'aperta' };
+      if (nc.verbaleChiusura === verbaleId) { patch.verbaleChiusura = null; patch.dataChiusura = null; }
+      await db.nonConformita.update(nc.id, patch);
+    }
+    await db.nonConformita.where('verbaleId').equals(verbaleId).modify({ bozza: true });
+    await db.verbali.update(verbaleId, { stato: 'bozza', riapertoIl: Date.now() });
   });
 }
 

@@ -48,6 +48,9 @@ const sezione = (t) => ({ text: t.toUpperCase(), style: 'h2' });
 export async function generaPdf(verbaleId) {
   const pm = await pdfMake();
   const v = await db.verbali.get(verbaleId);
+  const bozza = v.stato !== 'chiuso';
+  const rev = v.revisione ? ' – Rev. ' + v.revisione : '';
+  const num = bozza ? '(bozza)' : 'n. ' + v.numero + rev;
   const c = await db.cantieri.get(v.cantiereId);
   const s = await getImpostazioni();
   const imprese = Object.fromEntries((await db.imprese.toArray()).map(i => [i.id, i]));
@@ -87,7 +90,7 @@ export async function generaPdf(verbaleId) {
     margin: [0, 0, 0, 10]
   });
   content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5, lineColor: ACCENTO }] });
-  content.push({ text: `VERBALE DI SOPRALLUOGO N. ${v.numero}`, style: 'h1' });
+  content.push({ text: bozza ? 'BOZZA DI VERBALE DI SOPRALLUOGO' : `VERBALE DI SOPRALLUOGO N. ${v.numero}${rev.toUpperCase()}`, style: 'h1' });
   content.push({ text: 'Verifica in cantiere del Coordinatore per la sicurezza in fase di esecuzione – art. 92 D.Lgs. 81/2008', alignment: 'center', fontSize: 9, color: '#555', margin: [0, 0, 0, 12] });
 
   // Cantiere
@@ -95,6 +98,7 @@ export async function generaPdf(verbaleId) {
   content.push(kv([
     ['Cantiere', c.denominazione],
     ['Indirizzo', [c.indirizzo, c.comune].filter(Boolean).join(', ')],
+    ['Coordinate GPS', c.coordinate],
     ['Committente', c.committente],
     ['Responsabile dei lavori', c.rl],
     ['Direttore dei lavori', c.dl],
@@ -249,9 +253,10 @@ export async function generaPdf(verbaleId) {
 
   content.push({ text: testoGDPR(s), fontSize: 7, color: '#666', margin: [0, 10, 0, 0] });
 
-  const titolo = `Verbale di sopralluogo n. ${v.numero} – ${c.denominazione} – ${fmtData(v.data)}`;
+  const titolo = `Verbale di sopralluogo ${num} – ${c.denominazione} – ${fmtData(v.data)}`;
   const dd = {
     pageSize: 'A4',
+    ...(bozza ? { watermark: { text: 'BOZZA', color: '#c2410c', opacity: 0.08, bold: true } } : {}),
     pageMargins: [40, 40, 40, 50],
     info: { title: titolo, author: cse, subject: 'Verbale di sopralluogo CSE – D.Lgs. 81/2008' },
     defaultStyle: { fontSize: 10, lineHeight: 1.15 },
@@ -264,7 +269,7 @@ export async function generaPdf(verbaleId) {
     },
     footer: (pag, tot) => ({
       columns: [
-        { text: `Verbale n. ${v.numero} – ${c.denominazione}`, fontSize: 7, color: '#777' },
+        { text: `Verbale ${num} – ${c.denominazione}`, fontSize: 7, color: '#777' },
         { text: `pag. ${pag} di ${tot}`, alignment: 'right', fontSize: 7, color: '#777' }
       ], margin: [40, 15, 40, 0]
     }),
@@ -272,6 +277,6 @@ export async function generaPdf(verbaleId) {
   };
 
   const blob = await new Promise(res => pm.createPdf(dd).getBlob(res));
-  const nome = `Verbale_sopralluogo_${v.numero}_${slug(c.denominazione)}_${v.data}.pdf`;
+  const nome = `Verbale_sopralluogo_${bozza ? 'BOZZA' : v.numero + (v.revisione ? '_rev' + v.revisione : '')}_${slug(c.denominazione)}_${v.data}.pdf`;
   return new File([blob], nome, { type: 'application/pdf' });
 }

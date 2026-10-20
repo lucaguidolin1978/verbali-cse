@@ -275,6 +275,22 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .modal { position: fixed; inset: 0; z-index: 20; background: var(--bg); overflow-y: auto; }
 .modal .cat-filtri { top: 64px; }
 
+.indirizzo-auto { margin-bottom: 12px; }
+.indirizzo-auto .row-btns { margin: 0; align-items: center; }
+.sugg-wrap { position: relative; min-width: 0; }
+.sugg {
+  position: absolute; z-index: 15; left: 0; right: 0; top: calc(100% - 10px); margin: 0; padding: 4px 0; list-style: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .15);
+  max-height: 300px; overflow-y: auto;
+}
+.sugg button {
+  display: flex; flex-direction: column; align-items: flex-start; width: 100%; min-height: 44px; padding: 8px 12px;
+  border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.sugg button:hover, .sugg button:focus-visible { background: var(--surface-2); }
+.ricerca-piva { margin: -4px 0 12px; }
+.ricerca-piva .row-btns { margin: 0; }
+
 /* Finestre di conferma e anteprima PDF */
 .dlg-bg {
   position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px;
@@ -287,6 +303,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .dlg p { margin: 0 0 16px; font-size: 1.05rem; }
 .dlg .row-btns { justify-content: flex-end; margin: 0; }
 .pdf-pagine { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+.pdf-pagine.con-azioni { padding-bottom: 96px; }
+.pdf-azioni { z-index: 21; }
+.pdf-azioni .btn { min-width: 0; flex: 1; }
 .pdf-pagine canvas { max-width: 100%; height: auto; background: #fff; box-shadow: var(--shadow); }
 .btn:focus-visible, .icon-btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
