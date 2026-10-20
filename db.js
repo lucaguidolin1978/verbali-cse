@@ -48,6 +48,20 @@ export async function eliminaVerbaleBozza(verbaleId) {
   });
 }
 
+// Elimina un cantiere con tutti i suoi verbali, non conformità e foto. Le imprese restano in anagrafica.
+export async function eliminaCantiere(cantiereId) {
+  await db.transaction('rw', db.cantieri, db.cantiereImprese, db.verbali, db.nonConformita, db.foto, async () => {
+    const verbaliIds = await db.verbali.where('cantiereId').equals(cantiereId).primaryKeys();
+    const ncIds = await db.nonConformita.where('cantiereId').equals(cantiereId).primaryKeys();
+    await db.foto.where('verbaleId').anyOf(verbaliIds).delete();
+    await db.foto.where('ncId').anyOf(ncIds).delete();
+    await db.nonConformita.bulkDelete(ncIds);
+    await db.verbali.bulkDelete(verbaliIds);
+    await db.cantiereImprese.where('cantiereId').equals(cantiereId).delete();
+    await db.cantieri.delete(cantiereId);
+  });
+}
+
 export async function chiudiVerbale(verbaleId) {
   await db.transaction('rw', db.verbali, db.nonConformita, async () => {
     const v = await db.verbali.get(verbaleId);

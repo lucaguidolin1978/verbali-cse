@@ -1,8 +1,11 @@
 import { html, render, useState, useEffect, useRef, useMemo, useCallback } from 'https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.module.js';
 import {
   db, liveQuery, getImpostazioni, salvaImpostazioni, impreseDelCantiere, ncApertePrecedenti,
-  eliminaVerbaleBozza, chiudiVerbale, creaBackup, ripristinaBackup, puoRiaprire, riapriVerbale
+  eliminaVerbaleBozza, chiudiVerbale, creaBackup, ripristinaBackup, puoRiaprire, riapriVerbale, eliminaCantiere
 } from './db.js';
+
+// Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
+const VERSIONE = '7 · 20/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -236,14 +239,19 @@ async function indirizzoDaPosizione() {
   };
 }
 
-function IndirizzoAuto({ via, comune, onChange, etichetta = 'Indirizzo (via, piazza…)', unico }) {
+function IndirizzoAuto({ via, comune, onChange, etichetta = 'Indirizzo (via, piazza…)', unico, auto }) {
   const online = useOnline();
   const [sugg, setSugg] = useState([]);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const timer = useRef(null);
   const ultimoTesto = useRef('');
+  const attuale = useRef({ via, comune }); attuale.current = { via, comune };
   const disponibile = !PROVA && online;
+  // Nuovo cantiere: con l'indirizzo ancora vuoto la posizione si rileva da sola, una volta.
+  useEffect(() => {
+    if (auto && disponibile && navigator.geolocation && !via && !comune) posizione(true);
+  }, []);
   // Con un solo campo (es. sede dell'impresa) via e comune vengono uniti.
   const emetti = (v, c, coord) => unico ? onChange([v, c].filter(Boolean).join(', ')) : onChange(v, c, coord);
 
@@ -261,22 +269,27 @@ function IndirizzoAuto({ via, comune, onChange, etichetta = 'Indirizzo (via, pia
     }, 450);
   };
   const scegli = s => { setSugg([]); emetti(s.via, s.comune); };
-  const posizione = async () => {
+  async function posizione(automatica = false) {
     if (!navigator.geolocation) { setMsg('Questo dispositivo non fornisce la posizione.'); return; }
-    setBusy(true); setMsg('Rilevo la posizione…');
+    setBusy(true); setMsg(automatica ? 'Rilevo la posizione per proporti l\'indirizzo del cantiere…' : 'Rilevo la posizione…');
     try {
       const p = await indirizzoDaPosizione();
-      if (p.via || p.comune) {
-        emetti(p.via || via, p.comune || comune, p.coordinate);
+      const cur = attuale.current;
+      // Se nel frattempo l'indirizzo è stato scritto a mano, non lo si tocca.
+      if (automatica && (cur.via || cur.comune)) {
+        if (!unico) onChange(cur.via, cur.comune, p.coordinate);
+        setMsg('');
+      } else if (p.via || p.comune) {
+        emetti(p.via || cur.via, p.comune || cur.comune, p.coordinate);
         setMsg(`Indirizzo proposto dalla posizione (precisione circa ${Math.round(p.accuracy)} m). Controllalo e correggi il civico se serve.`);
       } else {
-        if (!unico) onChange(via, comune, p.coordinate);
+        if (!unico) onChange(cur.via, cur.comune, p.coordinate);
         setMsg(`Senza connessione non trovo l'indirizzo: ${unico ? '' : 'ho salvato le coordinate GPS. '}Scrivilo a mano.`);
       }
     } catch (e) {
-      setMsg(e.code === 1 ? 'Permesso di posizione negato: attivalo nelle impostazioni di Chrome per questo sito.' : 'Posizione non disponibile: riprova all\'aperto o scrivi l\'indirizzo a mano.');
+      setMsg(e.code === 1 ? 'Permesso di posizione negato: attivalo nelle impostazioni di Chrome per questo sito, oppure scrivi l\'indirizzo a mano.' : 'Posizione non disponibile: riprova all\'aperto o scrivi l\'indirizzo a mano.');
     } finally { setBusy(false); }
-  };
+  }
 
   return html`<div class="indirizzo-auto">
     <div class=${unico ? '' : 'grid2'}>
@@ -291,7 +304,7 @@ function IndirizzoAuto({ via, comune, onChange, etichetta = 'Indirizzo (via, pia
       ${!unico && html`<${Field} label="Comune" value=${comune} onInput=${x => onChange(via, x)} placeholder="CAP Comune (PR)" />`}
     </div>
     ${!PROVA && html`<div class="row-btns">
-      <button type="button" class="btn small" disabled=${busy} onClick=${posizione}>
+      <button type="button" class="btn small" disabled=${busy} onClick=${() => posizione()}>
         ${busy ? 'Rilevo…' : 'Usa la mia posizione'}</button>
       ${!online && html`<small class="hint">Senza connessione niente suggerimenti: scrivi l'indirizzo a mano.</small>`}
     </div>`}
@@ -525,6 +538,14 @@ function CantiereForm({ id }) {
     if (nuovo) { const nid = await db.cantieri.add(c); go(`/cantieri/${nid}`); }
     else { await db.cantieri.put(c); setDirty(false); }
   };
+  const eliminaQuesto = async () => {
+    const ncTot = await db.nonConformita.where('cantiereId').equals(c.id).count();
+    const testo = `Eliminare definitivamente il cantiere «${c.denominazione}» con ${verbali.length} verbali e ${ncTot} non conformità? ` +
+      'Le imprese restano in anagrafica. Se ti servono, fai prima il backup o salva i PDF. L\'operazione non si può annullare.';
+    if (!await chiedi(testo, 'Elimina')) return;
+    await eliminaCantiere(c.id);
+    go('/cantieri');
+  };
   const toggleImpresa = async (impresaId, on) => {
     const cid = Number(id);
     if (on) await db.cantiereImprese.add({ cantiereId: cid, impresaId });
@@ -540,8 +561,8 @@ function CantiereForm({ id }) {
     <section class="card">
       <h3>Dati del cantiere</h3>
       ${f('denominazione', 'Denominazione / oggetto dei lavori')}
-      <${IndirizzoAuto} via=${c.indirizzo} comune=${c.comune}
-        onChange=${(via, comune, coordinate) => set({ ...c, indirizzo: via, comune, ...(coordinate ? { coordinate } : {}) })} />
+      <${IndirizzoAuto} via=${c.indirizzo} comune=${c.comune} auto=${nuovo}
+        onChange=${(via, comune, coordinate) => set(cur => ({ ...cur, indirizzo: via, comune, ...(coordinate ? { coordinate } : {}) }))} />
       ${f('coordinate', 'Coordinate GPS (per i soccorsi)', { placeholder: 'es. 45.66690, 12.24300', hint: 'Si compilano con «Usa la mia posizione»; utili da comunicare al 112.' })}
       <div class="grid2">${f('notificaNumero', 'N. notifica preliminare (art. 99)')}${f('notificaData', 'Data notifica', { type: 'date' })}</div>
       ${f('titoloAbilitativo', 'Titolo abilitativo (PdC, SCIA…)')}
@@ -571,7 +592,8 @@ function CantiereForm({ id }) {
         <span><b>${v.stato === 'bozza' ? 'Bozza' : `Verbale n. ${v.numero}`}</b><small>${fmtData(v.data)}</small></span>
         ${v.stato === 'bozza' && html`<span class="tag amber">In corso</span>`}</a>`)
         : html`<${Empty}>Nessun verbale.<//>`}
-    </section>`}
+    </section>
+    <button class="btn danger ghost" onClick=${eliminaQuesto}>Elimina cantiere</button>`}
   </main>`;
 }
 
@@ -628,7 +650,13 @@ function RicercaPiva({ impresa, onDati }) {
     try {
       const r = await fetch(`${PONTE_PIVA}?piva=${encodeURIComponent(piva)}`);
       const d = await r.json();
-      if (!d.valida) { setStato({ busy: false, msg: (d.errore || 'Partita IVA non trovata.') + ' Puoi inserire i dati a mano.', tipo: 'warn' }); return; }
+      if (!d.valida) {
+        // VIES contiene solo le partite IVA abilitate agli scambi con l'estero: molte imprese edili non ci sono.
+        const msg = /non attiva|inesistente/i.test(d.errore || '')
+          ? 'Questa partita IVA non è nel registro europeo VIES (capita spesso alle imprese che non lavorano con l\'estero). Inserisci ragione sociale e sede a mano, oppure verificale con «Verifica su Agenzia Entrate».'
+          : (d.errore || 'Partita IVA non trovata.') + ' Puoi inserire i dati a mano.';
+        setStato({ busy: false, msg, tipo: 'warn' }); return;
+      }
       const cur = ultimo.current;
       // Si compilano da soli i campi vuoti; quelli già scritti con un valore diverso si propongono.
       const patch = {}, conflitti = {};
@@ -672,6 +700,8 @@ function RicercaPiva({ impresa, onDati }) {
       ${nome && html`<a class="btn small ghost" target="_blank" rel="noopener"
         href=${'https://www.google.com/search?q=' + encodeURIComponent(nome + ' partita iva sede')}>Cerca P.IVA per nome</a>`}
       <a class="btn small ghost" target="_blank" rel="noopener" href="https://www.inipec.gov.it/cerca-pec/-/pecs/companies">Cerca PEC su INI-PEC</a>
+      ${pivaValida(piva) && html`<a class="btn small ghost" target="_blank" rel="noopener"
+        href="https://telematici.agenziaentrate.gov.it/VerificaPIVA/Scegli.do?parameter=verificaPiva">Verifica su Agenzia Entrate</a>`}
     </div>
     ${!online && html`<small class="hint">Senza connessione i dati non si caricano da soli: inseriscili a mano.</small>`}
     ${pivaValida(piva) && html`<small class="hint">Email e PEC non sono nel registro europeo: cercale su INI-PEC (inserisci la P.IVA ${piva}) e incollale qui sotto.</small>`}
@@ -1392,7 +1422,7 @@ function Impostazioni() {
     </section>
     ${!PROVA && html`<section class="card">
       <h3>Problemi con l'app?</h3>
-      <p class="muted">Se un pulsante non risponde o l'app sembra vecchia, scarica di nuovo l'ultima versione. I dati restano.</p>
+      <p class="muted">Versione dell'app: <b>${VERSIONE}</b>. Se un pulsante non risponde o l'app sembra vecchia, scarica di nuovo l'ultima versione. I dati restano.</p>
       <button class="btn" onClick=${ripara}>Ripara app</button>
     </section>`}
   </main>`;
