@@ -1,53 +1,54 @@
+/* Tema "cantiere": blu notte, arancio alta visibilità, fascia gialla e nera; caratteri da segnaletica. */
 :root {
-  --bg: #f4f3f1;
-  --surface: #ffffff;
-  --surface-2: #f0eeeb;
-  --text: #1c1b1a;
-  --muted: #6b6762;
-  --border: #dcd8d3;
-  --accent: #c2410c;
-  --accent-text: #ffffff;
-  --accent-soft: #fde8dc;
-  --green: #15803d;
-  --green-soft: #dcfce7;
-  --amber: #b45309;
-  --amber-soft: #fef3c7;
-  --red: #b91c1c;
-  --red-soft: #fee2e2;
-  --blue-soft: #e0ecff;
-  --blue: #1d4ed8;
-  --radius: 12px;
-  --shadow: 0 1px 2px rgb(0 0 0 / .06);
+  --bg: #EEF0F2;
+  --surface: #FFFFFF;
+  --surface-2: #F2F4F6;
+  --text: #16212B;
+  --muted: #5B6672;
+  --border: #D5DAE0;
+  --field: #C9D0D7;
+  --accent: #C2410C;
+  --accent-text: #FFFFFF;
+  --accent-soft: #FFEDD5;
+  --ink: #16212B;
+  --ink-2: #22303C;
+  --ink-line: #3A4856;
+  --on-ink: #FFFFFF;
+  --on-ink-muted: #C3CCD5;
+  --hazard: #F5B700;
+  --green: #1E7B45;
+  --green-soft: #E3F4EA;
+  --amber: #B54708;
+  --amber-soft: #FFF4E5;
+  --red: #B42318;
+  --red-soft: #FEE4E2;
+  --blue-soft: #E0ECFF;
+  --blue: #1D4ED8;
+  --font-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgb(22 33 43 / .06);
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #151413;
-    --surface: #1f1e1c;
-    --surface-2: #2a2826;
-    --text: #f1efec;
-    --muted: #a8a39d;
-    --border: #3a3734;
-    --accent: #f97316;
-    --accent-text: #1c0f05;
-    --accent-soft: #3b2312;
-    --green: #4ade80;
-    --green-soft: #133220;
-    --amber: #fbbf24;
-    --amber-soft: #3a2c0c;
-    --red: #f87171;
-    --red-soft: #3d1717;
-    --blue-soft: #172442;
-    --blue: #93b4ff;
+    --bg: #0F161D; --surface: #18222C; --surface-2: #22303C; --text: #EEF1F4; --muted: #A3AFBB; --border: #2F3D4A;
+    --field: #3A4856; --accent: #F97316; --accent-text: #1C0F05; --accent-soft: #3B2312;
+    --ink: #0B1117; --ink-2: #18222C; --ink-line: #2F3D4A; --on-ink: #FFFFFF; --on-ink-muted: #A3AFBB;
+    --green: #4ADE80; --green-soft: #133220; --amber: #FBBF24; --amber-soft: #3A2C0C;
+    --red: #F87171; --red-soft: #3D1717; --blue-soft: #172442; --blue: #93B4FF;
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #151413; --surface: #1f1e1c; --surface-2: #2a2826; --text: #f1efec; --muted: #a8a39d; --border: #3a3734;
-  --accent: #f97316; --accent-text: #1c0f05; --accent-soft: #3b2312; --green: #4ade80; --green-soft: #133220;
-  --amber: #fbbf24; --amber-soft: #3a2c0c; --red: #f87171; --red-soft: #3d1717; --blue-soft: #172442; --blue: #93b4ff;
+  --bg: #0F161D; --surface: #18222C; --surface-2: #22303C; --text: #EEF1F4; --muted: #A3AFBB; --border: #2F3D4A;
+  --field: #3A4856; --accent: #F97316; --accent-text: #1C0F05; --accent-soft: #3B2312;
+  --ink: #0B1117; --ink-2: #18222C; --ink-line: #2F3D4A; --on-ink: #FFFFFF; --on-ink-muted: #A3AFBB;
+  --green: #4ADE80; --green-soft: #133220; --amber: #FBBF24; --amber-soft: #3A2C0C;
+  --red: #F87171; --red-soft: #3D1717; --blue-soft: #172442; --blue: #93B4FF;
   color-scheme: dark;
 }
 
@@ -309,7 +310,96 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .pdf-pagine canvas { max-width: 100%; height: auto; background: #fff; box-shadow: var(--shadow); }
 .btn:focus-visible, .icon-btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.update {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: center; align-items: center;
-  gap: 12px; padding: 8px 16px; background: var(--accent-soft);
+/* ======== Tema cantiere: regole che danno il nuovo aspetto ======== */
+body { font-family: var(--font-body); }
+input, select, textarea { border-color: var(--field); }
+.card { border-radius: var(--radius); }
+small, .area-head small, .voce small, .nc-head small { font-family: var(--font-mono); font-size: .75rem; }
+
+/* Intestazione scura con fascia gialla e nera */
+.top {
+  background: var(--ink); color: var(--on-ink); border-bottom: 0;
+  padding: 14px max(16px, env(safe-area-inset-right)) 14px max(16px, env(safe-area-inset-left));
+  padding-top: calc(14px + env(safe-area-inset-top));
 }
+.top::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 6px;
+  background: repeating-linear-gradient(-45deg, var(--hazard) 0 12px, var(--ink) 12px 24px);
+}
+.top h1 { font-family: var(--font-display); font-weight: 700; font-size: 1.75rem; letter-spacing: .02em; text-transform: uppercase; line-height: 1.05; }
+.top h1 small {
+  font-family: var(--font-mono); font-weight: 500; font-size: .72rem; letter-spacing: .08em;
+  color: var(--hazard); text-transform: uppercase; margin-bottom: 2px;
+}
+.top .icon-btn { color: var(--on-ink); border: 1px solid var(--ink-line); }
+.top .btn.ghost { color: var(--on-ink); border-color: var(--ink-line); }
+.top .btn.ghost.danger { color: #FCA5A5; }
+.top .btn:not(.primary):not(.ghost) { background: transparent; color: var(--on-ink); border-color: var(--ink-line); }
+.top .logo-mini { width: 44px; height: 44px; flex: none; }
+.top .logo-mini svg { width: 100%; height: 100%; display: block; }
+
+/* Titoli di sezione */
+h2 { font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; color: var(--text); letter-spacing: .03em; margin: 28px 2px 10px; }
+h3 { font-size: 1.1rem; }
+.cat-gruppo h3 { font-family: var(--font-display); font-size: 1.25rem; text-transform: uppercase; letter-spacing: .03em; color: var(--text); }
+
+/* Pulsanti principali */
+.btn.primary { box-shadow: 0 4px 12px rgb(194 65 12 / .22); }
+.btn.big, .wizard-nav .btn.primary, .pdf-azioni .btn.primary {
+  font-family: var(--font-display); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 1.4rem;
+}
+.btn.big { min-height: 64px; border-radius: 14px; }
+.btn.big.primary { box-shadow: 0 6px 16px rgb(194 65 12 / .28); }
+.wizard-nav .btn { min-height: 52px; border-radius: 12px; }
+
+/* Fascia scura della Home con contatori */
+.hero { background: var(--ink); color: var(--on-ink); }
+.hero-in { max-width: 900px; margin: 0 auto; padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 14px; }
+.hero-cse { display: flex; flex-direction: column; gap: 2px; }
+.hero-cse small { color: var(--hazard); letter-spacing: .08em; text-transform: uppercase; }
+.hero-cse b { font-size: 1.1rem; }
+.hero .stats { margin: 0; }
+.hero .stat { background: var(--ink-2); border: 0; align-items: flex-start; padding: 14px 16px; color: var(--on-ink); }
+.hero .stat b { font-family: var(--font-display); font-size: 2.6rem; line-height: 1; }
+.hero .stat span { color: var(--on-ink-muted); text-align: left; }
+.hero .stat.warn b { color: #FDBA74; }
+.hero .stat.alert { background: #7F1D1D; }
+.hero .stat.alert b { color: #FFFFFF; }
+.hero .stat.alert span { color: #FECACA; }
+.stat b { font-family: var(--font-display); font-size: 2rem; }
+
+/* Passi della procedura nella fascia scura */
+.steps { position: static; background: var(--ink); padding: 0 16px 14px; gap: 6px; }
+.steps button {
+  width: auto; flex: 1; max-width: 72px; height: 32px; border-radius: 8px; border: 0;
+  background: var(--ink-2); color: var(--on-ink-muted); font-family: var(--font-mono); font-size: .8rem;
+}
+.steps button.done { background: #F97316; color: #1C0F05; }
+.steps button.on { background: var(--on-ink); color: var(--ink); }
+
+/* Esiti della checklist */
+.seg { border-color: var(--field); }
+.seg button { min-height: 48px; border-right-color: var(--field); font-size: 1rem; }
+@media (min-width: 521px) { .seg.esito { width: 216px; } }
+.voce.nc .add-foto { background: var(--surface); }
+.voce.nc { box-shadow: none; padding: 14px 16px; margin: 0 -16px; background: var(--red-soft); border-top-color: transparent; }
+.area-head b { font-size: 1.1rem; }
+
+/* Schede NC con fascia colorata secondo la gravità */
+.card.nc { padding-top: 0; overflow: hidden; }
+.card.nc > .nc-head { margin: 0 -16px 12px; padding: 10px 16px; background: var(--surface-2); }
+.card.nc.g-pgi { box-shadow: var(--shadow); }
+.card.nc.g-grave { box-shadow: var(--shadow); }
+.card.nc.g-pgi > .nc-head { background: var(--red); color: #FFFFFF; }
+.card.nc.g-pgi > .nc-head small { color: #FFFFFF; }
+.card.nc.g-grave > .nc-head { background: var(--amber-soft); }
+.card.nc.g-lieve > .nc-head { background: var(--blue-soft); }
+.nc-titolo { display: flex; flex-direction: column; min-width: 0; }
+.nc-titolo b { font-family: var(--font-display); font-size: 1.25rem; text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; }
+.card.nc .nc-head .btn:not(.danger) { background: var(--surface); color: var(--text); }
+.card.nc.late { border-color: var(--red); border-width: 2px; }
+
+/* Navigazione inferiore */
+nav.bottom a { padding: 10px 2px; font-size: .8rem; }
+nav.bottom a.on { color: var(--accent); }
+nav.bottom a.on svg { stroke-width: 2.4; }

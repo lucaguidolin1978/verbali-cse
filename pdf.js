@@ -2,6 +2,7 @@
 import { db, getImpostazioni } from './db.js';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { fmtData, blobToDataURL, slug } from './util.js';
+import { LOGO_CHIARO } from './logo.js';
 
 export const PDFMAKE_URLS = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js',
@@ -79,7 +80,8 @@ export async function generaPdf(verbaleId) {
   // Intestazione
   content.push({
     columns: [
-      s.logo ? { image: s.logo, fit: [110, 60], width: 120 } : { text: '', width: 0 },
+      // Logo caricato nelle Impostazioni, altrimenti il logo dello studio (versione bicolore).
+      s.logo ? { image: s.logo, fit: [110, 60], width: 120 } : { svg: LOGO_CHIARO, width: 62, height: 62 },
       { stack: [
         { text: cse || 'Coordinatore per la sicurezza', bold: true, fontSize: 11 },
         { text: 'Coordinatore per la sicurezza in fase di esecuzione', fontSize: 9 },

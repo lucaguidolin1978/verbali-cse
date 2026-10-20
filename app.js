@@ -5,6 +5,7 @@ import {
 } from './db.js';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
+import { LOGO_SCURO } from './logo.js';
 import { oggiISO, oraHHMM, fmtData, scaduta, ridimensiona, blobToDataURL, condividiOScarica, scarica } from './util.js';
 
 const SignaturePad = window.SignaturePad;
@@ -376,9 +377,10 @@ function CatalogoPage() {
 
 const Empty = ({ children }) => html`<p class="empty">${children}</p>`;
 
-function Header({ title, back, children }) {
+function Header({ title, back, logo, children }) {
   return html`<header class="top">
     ${back && html`<button class="icon-btn" aria-label="Indietro" onClick=${() => go(back)}><${Icon} d=${I.back} /></button>`}
+    ${logo && html`<span class="logo-mini" dangerouslySetInnerHTML=${{ __html: LOGO_SCURO }}></span>`}
     <h1>${title}</h1>
     <div class="top-actions">${children}</div>
   </header>`;
@@ -398,7 +400,18 @@ function Home() {
   const giorni = imp.ultimoBackup ? Math.floor((Date.now() - imp.ultimoBackup) / 86400000) : null;
   const backupDovuto = cantieri.length > 0 && (giorni === null || giorni >= GIORNI_BACKUP);
 
-  return html`<${Header} title="Verbali CSE" />
+  const cse = [imp.titolo, imp.nome].filter(Boolean).join(' ');
+  return html`<${Header} title="Verbali di cantiere" logo />
+  <section class="hero" aria-label="Riepilogo">
+    <div class="hero-in">
+      ${cse && html`<div class="hero-cse"><small>Coordinatore in esecuzione</small><b>${cse}</b></div>`}
+      <div class="stats">
+        <a class="stat" href="#/cantieri"><b>${cantieri.length}</b><span>cantieri attivi</span></a>
+        <a class=${'stat' + (nc.length ? ' warn' : '')} href="#/nc"><b>${nc.length}</b><span>NC aperte</span></a>
+        <a class=${'stat' + (scadute.length ? ' alert' : '')} href="#/nc/scadute"><b>${scadute.length}</b><span>NC scadute</span></a>
+      </div>
+    </div>
+  </section>
   <main>
     ${PROVA && html`<div class="banner warn"><b>Versione di prova.</b> I dati restano solo in questo browser.
       Foto da file, firme, checklist, catalogo NC e anteprima del PDF funzionano. Download, condivisione, email e dettatura
@@ -410,14 +423,7 @@ function Home() {
     </div>`}
     ${!imp.nome && html`<div class="banner info">Inizia dalle <a href="#/impostazioni">Impostazioni</a>: inserisci i tuoi dati di CSE, il logo e la firma.</div>`}
     ${backupDovuto && !PROVA && html`<div class="banner warn">
-      ${giorni === null ? 'Non hai ancora fatto un backup.' : `Ultimo backup ${giorni} giorni fa.`}
-      I dati sono solo su questo dispositivo. <a href="#/impostazioni">Fai il backup</a></div>`}
-
-    <div class="stats">
-      <a class="stat" href="#/cantieri"><b>${cantieri.length}</b><span>cantieri attivi</span></a>
-      <a class="stat" href="#/nc"><b>${nc.length}</b><span>NC aperte</span></a>
-      <a class=${'stat' + (scadute.length ? ' alert' : '')} href="#/nc/scadute"><b>${scadute.length}</b><span>NC scadute</span></a>
-    </div>
+      ${giorni === null ? 'Non hai ancora fatto un backup. ' : `Ultimo backup ${giorni} giorni fa. `}I dati sono solo su questo dispositivo. <a href="#/impostazioni">Fai il backup</a></div>`}
 
     <button class="btn primary big" onClick=${() => setScelta(!scelta)} disabled=${!cantieri.length}>
       <${Icon} d=${I.plus} /> Nuovo sopralluogo</button>
@@ -955,7 +961,7 @@ function NcEditor({ nc, imprese, presenze, vid }) {
   const ordinate = [...imprese].sort((a, b) => (presentiIds.has(b.id) - presentiIds.has(a.id)) || a.ragioneSociale.localeCompare(b.ragioneSociale));
   return html`<section class=${'card nc g-' + n.gravita}>
     <div class="nc-head">
-      ${n.voceId ? html`<small>${VOCI[n.voceId]?.area}</small>` : html`<small>NC aggiuntiva</small>`}
+      <span class="nc-titolo"><b>${GRAVITA[n.gravita]}</b><small>${n.voceId ? VOCI[n.voceId]?.area : 'NC aggiuntiva'}</small></span>
       <span class="row-btns">
         <button class="btn small" onClick=${() => setCatalogo(true)}>Dal catalogo</button>
         ${!n.voceId && html`<button class="btn small ghost danger" onClick=${elimina}>Elimina</button>`}

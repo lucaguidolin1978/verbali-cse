@@ -1,11 +1,11 @@
 // Service worker: permette l'uso completamente offline.
 // File dell'app: si prende la versione più recente quando c'è rete (entro 4 secondi),
 // altrimenti la copia salvata. Librerie esterne: sempre dalla copia salvata.
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE = 'verbali-cse-' + CACHE_VERSION;
 
 const APP = [
-  './', './index.html', './styles.css', './app.js', './db.js', './util.js', './checklist.js', './catalogo.js', './pdf.js',
+  './', './index.html', './styles.css', './app.js', './db.js', './util.js', './checklist.js', './catalogo.js', './pdf.js', './logo.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
 ];
 const CDN = [
@@ -35,7 +35,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+    for (const k of await caches.keys()) if (k !== CACHE && k !== CACHE + '-font') await caches.delete(k);
     await self.clients.claim();
   })());
 });
@@ -70,11 +70,22 @@ async function cachePrima(req) {
   return r;
 }
 
+async function caratteri(req) {
+  const c = await caches.open(CACHE + '-font');
+  const cached = await c.match(req.url);
+  if (cached) return cached;
+  const r = await fetch(req);
+  if (r.ok || r.type === 'opaque') c.put(req.url, r.clone());
+  return r;
+}
+
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin === self.location.origin) e.respondWith(retePrima(req));
   else if (CDN.includes(url.origin + url.pathname)) e.respondWith(cachePrima(req));
+  // Caratteri tipografici: salvati al primo uso, così l'aspetto resta uguale anche offline.
+  else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') e.respondWith(caratteri(req));
   // Tutto il resto (indirizzi, partite IVA) va sempre in rete, senza cache.
 });
