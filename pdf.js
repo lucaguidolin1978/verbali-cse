@@ -155,6 +155,17 @@ export async function generaPdf(verbaleId) {
 
   // Checklist
   content.push(sezione('Esito delle verifiche'));
+  content.push({
+    text: [
+      { text: 'Legenda: ', bold: true },
+      { text: 'C', bold: true, color: '#15803d' }, ' = conforme;  ',
+      { text: 'NC', bold: true, color: '#b91c1c' }, ' = non conforme;  ',
+      { text: 'N.A.', bold: true }, ' = non applicabile;  ',
+      { text: 'non verificata', italics: true }, ' = voce non controllata in questo sopralluogo.  ',
+      { text: 'Gravità NC: ', bold: true }, 'lieve · grave · pericolo grave e imminente (art. 92 c.1 lett. f).'
+    ],
+    fontSize: 8, color: '#444', margin: [0, 0, 0, 6]
+  });
   const body = [['Voce', 'Esito', 'Note'].map(t => ({ text: t, style: 'th' }))];
   const naPerArea = [];
   for (const area of CHECKLIST) {

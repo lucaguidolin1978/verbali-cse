@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '7 · 20/10/2026';
+const VERSIONE = '9 · 20/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -584,7 +584,7 @@ function CantiereForm({ id }) {
         <input type="checkbox" checked=${links.some(l => l.impresaId === i.id)} onChange=${e => toggleImpresa(i.id, e.target.checked)} />
         <span><b>${i.ragioneSociale}</b> <small>${TIPI_IMPRESA[i.tipo] || ''}</small></span></label>`)
         : html`<${Empty}>Nessuna impresa in anagrafica.<//>`}
-      <a class="btn small ghost" href="#/imprese/nuova">+ Nuova impresa</a>
+      <a class="btn small ghost" href=${`#/imprese/nuova/${c.id}`}>+ Nuova impresa</a>
     </section>
     <section class="card list">
       <h3>Verbali</h3>
@@ -708,7 +708,7 @@ function RicercaPiva({ impresa, onDati }) {
   </div>`;
 }
 
-function ImpresaForm({ id }) {
+function ImpresaForm({ id, cantiere }) {
   const nuova = id === 'nuova';
   const [i, setI] = useState(null);
   const [dirty, setDirty] = useState(false);
@@ -718,7 +718,12 @@ function ImpresaForm({ id }) {
   const f = binder(i, set);
   const salva = async () => {
     if (!i.ragioneSociale.trim()) { avviso('Inserisci la ragione sociale.'); return; }
-    if (nuova) { await db.imprese.add(i); history.back(); }
+    if (nuova) {
+      const nid = await db.imprese.add(i);
+      // Creata dalla scheda di un cantiere: si associa e si torna lì; altrimenti all'elenco imprese.
+      if (cantiere) { await db.cantiereImprese.add({ cantiereId: Number(cantiere), impresaId: nid }); go(`/cantieri/${cantiere}`); }
+      else go('/imprese');
+    }
     else { await db.imprese.put(i); setDirty(false); }
   };
   const elimina = async () => {
@@ -729,11 +734,12 @@ function ImpresaForm({ id }) {
     await db.imprese.delete(i.id);
     go('/imprese');
   };
-  return html`<${Header} title=${nuova ? 'Nuova impresa' : i.ragioneSociale} back="/imprese">
+  return html`<${Header} title=${nuova ? 'Nuova impresa' : i.ragioneSociale} back=${cantiere ? `/cantieri/${cantiere}` : '/imprese'}>
     <button class="btn small primary" disabled=${!dirty && !nuova} onClick=${salva}>Salva</button>
   <//>
   <main>
     <section class="card">
+      ${nuova && html`<p class="hint">Scrivi la partita IVA per caricare in automatico ragione sociale e sede, oppure compila i campi a mano. Poi premi <b>Salva</b>.</p>`}
       <div class="grid2">${f('piva', 'Partita IVA', { inputmode: 'numeric', placeholder: '11 cifre' })}
         ${f('tipo', 'Tipo', { options: Object.entries(TIPI_IMPRESA) })}</div>
       <${RicercaPiva} impresa=${i} onDati=${d => { setI(cur => ({ ...cur, ...d })); setDirty(true); }} />
@@ -1150,7 +1156,28 @@ function VerbaleView({ id }) {
     if (r === 'scaricato') setMsg('PDF salvato nei Download.');
   };
   const scaricaPdf = async () => { const f = await genera(); if (f) { scarica(f); setMsg('PDF salvato nei Download.'); } };
-  const email = () => { location.href = mailtoVerbale(v, c, imprese); };
+  // Email con il PDF già allegato: si passa dalla condivisione di Android (Gmail, app PEC…), che allega il file
+  // e compila oggetto e testo. I destinatari non passano da lì: li copiamo negli appunti da incollare nel campo «A».
+  const email = async () => {
+    const { to, cc, oggetto, body } = datiEmail(v, c, imprese);
+    const destinatari = [...to, ...cc].join(', ');
+    let copiati = false;
+    if (destinatari) { try { await navigator.clipboard.writeText(destinatari); copiati = true; } catch { /* appunti non disponibili */ } }
+    const f = await genera(); if (!f) return;
+    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+      try {
+        await navigator.share({ files: [f], title: oggetto, text: body });
+        setMsg(destinatari
+          ? (copiati ? `Destinatari copiati: incollali nel campo «A» dell'email (${destinatari}).` : `Destinatari da inserire: ${destinatari}.`)
+          : 'Nessun indirizzo email in anagrafica: inserisci i destinatari nell\'email.');
+      } catch (e) { if (e.name !== 'AbortError') setMsg('Condivisione non riuscita: usa «Scarica PDF» e allegalo a mano.'); }
+      return;
+    }
+    // Dispositivo senza condivisione di file (es. PC): si scarica il PDF e si apre l'email precompilata.
+    scarica(f);
+    location.href = mailtoVerbale(v, c, imprese);
+    setMsg('PDF salvato nei Download: allegalo all\'email che si è aperta.');
+  };
   const anteprima = async () => { const f = await genera(); if (f) setVedi(f); };
   const modifica = async () => {
     if (!await puoRiaprire(vid)) {
@@ -1198,7 +1225,7 @@ function VerbaleView({ id }) {
         <button class="btn primary big" disabled=${busy} onClick=${anteprima}>${busy ? 'Genero il PDF…' : 'Anteprima e invio'}</button>
         <button class="btn" disabled=${busy} onClick=${condividi}>Condividi PDF</button>
         <button class="btn" disabled=${busy} onClick=${scaricaPdf}>Scarica PDF</button>
-        <button class="btn" onClick=${email}>Email precompilata</button>`}
+        <button class="btn" disabled=${busy} onClick=${email}>Email con PDF allegato</button>`}
       <div class="row-btns">
         <button class="btn" onClick=${modifica}>Modifica verbale</button>
         <button class="btn ghost danger" onClick=${elimina}>Elimina verbale</button>
@@ -1206,10 +1233,10 @@ function VerbaleView({ id }) {
       ${msg && html`<p class="hint">${msg}</p>`}
       ${vedi && html`<${AnteprimaPdf} file=${vedi} onClose=${() => setVedi(null)} azioni=${PROVA ? null : html`
         <button class="btn ghost" onClick=${() => setVedi(null)}>Chiudi</button>
-        <button class="btn" onClick=${email}>Email</button>
+        <button class="btn" onClick=${email}>Email + PDF</button>
         <button class="btn primary" onClick=${condividi}>Condividi PDF</button>`} />`}
-      <div class="banner info">L'email si apre con destinatari, oggetto e testo: allega il PDF. Per la data certa
-        firma digitalmente il PDF (PAdES) con il tuo software di firma e invialo via PEC.</div>
+      <div class="banner info">«Email con PDF allegato»: scegli Gmail o l'app della PEC; il PDF è già allegato con oggetto e testo,
+        i destinatari sono copiati: incollali nel campo «A». Per la data certa firma digitalmente il PDF (PAdES) e invialo via PEC.</div>
     </section>
   </main>`;
 }
@@ -1264,14 +1291,19 @@ function AnteprimaPdf({ file, onClose, azioni }) {
 
 const oggettoEmail = (v, c) => `Verbale di sopralluogo n. ${v.numero}${v.revisione ? ' Rev. ' + v.revisione : ''} – ${c.denominazione} – ${fmtData(v.data)}`;
 
-function mailtoVerbale(v, c, imprese) {
+function datiEmail(v, c, imprese) {
   const presenti = new Set(v.presenze.filter(p => p.presente).map(p => p.impresaId));
-  const to = [c.committenteEmail, c.rlEmail].filter(Boolean);
-  const cc = [c.dlEmail, ...imprese.filter(i => presenti.has(i.id)).map(i => i.pec || i.email)].filter(Boolean);
-  const body = `Buongiorno,\n\nsi trasmette in allegato il verbale di sopralluogo n. ${v.numero} del ${fmtData(v.data)} relativo al cantiere "${c.denominazione}"${c.indirizzo ? ' in ' + c.indirizzo : ''}, redatto ai sensi dell'art. 92 del D.Lgs. 81/2008.\n\nLe imprese in indirizzo sono tenute ad attuare le prescrizioni riportate entro i termini indicati.\n\nCordiali saluti`;
-  const q = [cc.length && 'cc=' + encodeURIComponent([...new Set(cc)].join(',')),
-    'subject=' + encodeURIComponent(oggettoEmail(v, c)), 'body=' + encodeURIComponent(body)].filter(Boolean).join('&');
-  return `mailto:${[...new Set(to)].join(',')}?${q}`;
+  const to = [...new Set([c.committenteEmail, c.rlEmail].filter(Boolean))];
+  const cc = [...new Set([c.dlEmail, ...imprese.filter(i => presenti.has(i.id)).map(i => i.pec || i.email)].filter(Boolean))];
+  const body = `Buongiorno,\n\nsi trasmette in allegato il verbale di sopralluogo n. ${v.numero}${v.revisione ? ' Rev. ' + v.revisione : ''} del ${fmtData(v.data)} relativo al cantiere "${c.denominazione}"${c.indirizzo ? ' in ' + c.indirizzo : ''}, redatto ai sensi dell'art. 92 del D.Lgs. 81/2008.\n\nLe imprese in indirizzo sono tenute ad attuare le prescrizioni riportate entro i termini indicati.\n\nCordiali saluti`;
+  return { to, cc, oggetto: oggettoEmail(v, c), body };
+}
+
+function mailtoVerbale(v, c, imprese) {
+  const { to, cc, oggetto, body } = datiEmail(v, c, imprese);
+  const q = [cc.length && 'cc=' + encodeURIComponent(cc.join(',')),
+    'subject=' + encodeURIComponent(oggetto), 'body=' + encodeURIComponent(body)].filter(Boolean).join('&');
+  return `mailto:${to.join(',')}?${q}`;
 }
 
 // ---------- Registro NC ----------
@@ -1449,7 +1481,7 @@ function App() {
   if (sez === 'sopralluogo') page = html`<${Sopralluogo} id=${a} step=${b} />`;
   else if (sez === 'verbale') page = html`<${VerbaleView} id=${a} />`;
   else if (sez === 'cantieri') page = a ? html`<${CantiereForm} key=${a} id=${a} />` : html`<${CantieriList} />`;
-  else if (sez === 'imprese') page = a ? html`<${ImpresaForm} key=${a} id=${a} />` : html`<${ImpreseList} />`;
+  else if (sez === 'imprese') page = a ? html`<${ImpresaForm} key=${a + (b || '')} id=${a} cantiere=${b} />` : html`<${ImpreseList} />`;
   else if (sez === 'nc') page = html`<${RegistroNC} filtro=${a} key=${a} />`;
   else if (sez === 'catalogo') page = html`<${CatalogoPage} />`;
   else if (sez === 'impostazioni') page = html`<${Impostazioni} />`;
