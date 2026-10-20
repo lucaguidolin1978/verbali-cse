@@ -399,6 +399,10 @@ h3 { font-size: 1.1rem; }
 .card.nc .nc-head .btn:not(.danger) { background: var(--surface); color: var(--text); }
 .card.nc.late { border-color: var(--red); border-width: 2px; }
 
+.dlg-scelte { display: flex; flex-direction: column; gap: 8px; }
+.dlg-scelte .btn { width: 100%; }
+.sync-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
 /* Google Drive nel verbale */
 .drive-box {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;

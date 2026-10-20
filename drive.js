@@ -86,13 +86,50 @@ async function trovaOCreaCartella(nome, padre) {
   return nuova.id;
 }
 
-async function cartellaCantiere(cantiere) {
+export async function cartellaRadice() {
   const imp = await getImpostazioni();
   let radice = imp.driveCartellaId;
   if (!(await esiste(radice))) {
     radice = await trovaOCreaCartella(CARTELLA_PRINCIPALE, null);
     await salvaImpostazioni({ driveCartellaId: radice });
   }
+  return radice;
+}
+
+// ---- File dei dati per la sincronizzazione tra dispositivi ----
+export const FILE_DATI = 'dati app Verbali CSE (non modificare).json';
+
+// Restituisce { id, version } del file dati su Drive, oppure null se non esiste ancora.
+export async function infoFileDati() {
+  const radice = await cartellaRadice();
+  const filtro = `name='${q(FILE_DATI)}' and '${radice}' in parents and trashed=false`;
+  const r = await chiama(`${API}/files?q=${encodeURIComponent(filtro)}&fields=files(id,version,modifiedTime)&spaces=drive`);
+  return r.files?.[0] ? { id: r.files[0].id, version: String(r.files[0].version) } : null;
+}
+
+export async function scaricaFileDati(id) {
+  const r = await fetch(`${API}/files/${id}?alt=media`, { headers: { Authorization: 'Bearer ' + token.valore } });
+  if (!r.ok) throw new Error(`Download dei dati non riuscito (${r.status}).`);
+  return r.json();
+}
+
+// Carica (o sostituisce) il file dati e restituisce { id, version } aggiornati.
+export async function caricaFileDati(dati, id, nome = FILE_DATI) {
+  const blob = new Blob([JSON.stringify(dati)], { type: 'application/json' });
+  if (id) {
+    const r = await chiama(`${UPLOAD}/files/${id}?uploadType=media&fields=id,version`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: blob });
+    return { id: r.id, version: String(r.version) };
+  }
+  const radice = await cartellaRadice();
+  const corpo = new FormData();
+  corpo.append('metadata', new Blob([JSON.stringify({ name: nome, mimeType: 'application/json', parents: [radice] })], { type: 'application/json' }));
+  corpo.append('file', blob);
+  const r = await chiama(`${UPLOAD}/files?uploadType=multipart&fields=id,version`, { method: 'POST', body: corpo });
+  return { id: r.id, version: String(r.version) };
+}
+
+async function cartellaCantiere(cantiere) {
+  const radice = await cartellaRadice();
   let id = cantiere.driveCartellaId;
   if (!(await esiste(id))) {
     id = await trovaOCreaCartella(pulisciNome(cantiere.denominazione), radice);

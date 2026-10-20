@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '10 · 20/10/2026';
+const VERSIONE = '11 · 20/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -13,6 +13,7 @@ import {
   driveConfigurato, accedi as accediDrive, scollega as scollegaDrive, accessoAttivo,
   salvaVerbaleSuDrive, verbaliDaInviare, linkCartella, CARTELLA_PRINCIPALE
 } from './drive.js';
+import { sincronizza, statoSync, usaDrive, usaQuestoDispositivo, unisci } from './sync.js';
 import { oggiISO, oraHHMM, fmtData, scaduta, ridimensiona, blobToDataURL, condividiOScarica, scarica } from './util.js';
 
 const SignaturePad = window.SignaturePad;
@@ -26,19 +27,23 @@ const GIORNI_BACKUP = 7;
 let apriDialogo = () => {};
 const chiedi = (testo, ok = 'Conferma') => new Promise(res => apriDialogo({ testo, ok, res, conferma: true }));
 const avviso = testo => new Promise(res => apriDialogo({ testo, ok: 'OK', res, conferma: false }));
+// Più scelte: [{ valore, etichetta, primaria? }]; restituisce il valore scelto, o null se si chiude.
+const scegli = (testo, scelte) => new Promise(res => apriDialogo({ testo, scelte, res }));
 
 function Dialogo() {
   const [d, setD] = useState(null);
   apriDialogo = setD;
   if (!d) return null;
   const chiudi = v => { setD(null); d.res(v); };
-  return html`<div class="dlg-bg" onClick=${e => e.target === e.currentTarget && chiudi(false)}>
+  return html`<div class="dlg-bg" onClick=${e => e.target === e.currentTarget && chiudi(d.scelte ? null : false)}>
     <div class="dlg" role="alertdialog" aria-modal="true">
       <p>${d.testo}</p>
-      <div class="row-btns">
+      ${d.scelte ? html`<div class="dlg-scelte">${d.scelte.map(s => html`
+          <button class=${'btn' + (s.primaria ? ' primary' : '')} onClick=${() => chiudi(s.valore)}>${s.etichetta}</button>`)}</div>`
+      : html`<div class="row-btns">
         ${d.conferma && html`<button class="btn ghost" onClick=${() => chiudi(false)}>Annulla</button>`}
         <button class="btn primary" onClick=${() => chiudi(true)} autofocus>${d.ok}</button>
-      </div>
+      </div>`}
     </div>
   </div>`;
 }
@@ -440,6 +445,7 @@ function Home() {
       <button class="btn primary" onClick=${caricaEsempio}>Carica esempio</button>
     </div>`}
     ${!imp.nome && html`<div class="banner info">Inizia dalle <a href="#/impostazioni">Impostazioni</a>: inserisci i tuoi dati di CSE, il logo e la firma.</div>`}
+    <${SyncBanner} />
     ${imp.driveCollegato && sospesiDrive?.length > 0 && !PROVA && html`<div class="banner warn">
       ${sospesiDrive.length === 1 ? '1 verbale da salvare' : `${sospesiDrive.length} verbali da salvare`} su Google Drive.
       <a href="#/impostazioni">Salva ora</a></div>`}
@@ -1261,6 +1267,74 @@ function VerbaleView({ id }) {
   </main>`;
 }
 
+// ---------- Sincronizzazione dei dati tra dispositivi ----------
+
+function useSync() {
+  const [s, setS] = useState(statoSync());
+  useEffect(() => {
+    const f = e => setS({ ...e.detail });
+    addEventListener('sync-stato', f);
+    return () => removeEventListener('sync-stato', f);
+  }, []);
+  return s;
+}
+
+async function risolviConflitto(tipo) {
+  const testo = tipo === 'primo'
+    ? 'Su Google Drive ci sono già dati dell\'app, salvati da un altro dispositivo, e anche questo dispositivo ne contiene. Cosa vuoi fare?'
+    : 'I dati sono stati modificati sia su questo dispositivo sia su un altro dall\'ultima sincronizzazione. Quali vuoi tenere?';
+  const scelte = tipo === 'primo'
+    ? [{ valore: 'unisci', etichetta: 'Unisci i dati (consigliato)', primaria: true },
+       { valore: 'drive', etichetta: 'Usa solo quelli di Drive' },
+       { valore: 'locale', etichetta: 'Usa solo quelli di questo dispositivo' },
+       { valore: null, etichetta: 'Decido dopo' }]
+    : [{ valore: 'drive', etichetta: 'Tieni quelli di Drive', primaria: true },
+       { valore: 'locale', etichetta: 'Tieni quelli di questo dispositivo' },
+       { valore: null, etichetta: 'Decido dopo' }];
+  const scelta = await scegli(testo, scelte);
+  if (scelta === 'drive') {
+    if (!await chiedi('I dati di questo dispositivo verranno sostituiti da quelli di Drive. Prima ne salvo una copia di sicurezza su Drive.', 'Sostituisci')) return 'annullato';
+    await usaDrive(); return 'Dati scaricati da Google Drive.';
+  }
+  if (scelta === 'locale') {
+    if (!await chiedi('I dati su Drive verranno sostituiti da quelli di questo dispositivo. Le modifiche fatte sull\'altro dispositivo andranno perse.', 'Sostituisci')) return 'annullato';
+    await usaQuestoDispositivo(); return 'Dati di questo dispositivo caricati su Google Drive.';
+  }
+  if (scelta === 'unisci') { await unisci(); return 'Dati uniti e caricati su Google Drive.'; }
+  return 'annullato';
+}
+
+// Avvia una sincronizzazione e, se serve, chiede all'utente come risolvere le differenze.
+async function avviaSync(interattivo) {
+  const r = await sincronizza({ interattivo });
+  if (r?.conflitto) return risolviConflitto(r.conflitto);
+  return { scaricato: 'Dati aggiornati da Google Drive.', caricato: 'Modifiche salvate su Google Drive.', 'nessuna-modifica': 'Dati già aggiornati.' }[r] || '';
+}
+
+function SyncBanner() {
+  const imp = useLive(() => getImpostazioni());
+  const s = useSync();
+  const online = useOnline();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  if (!imp?.driveCollegato || !driveConfigurato() || PROVA) return null;
+  let fatta = false; try { fatta = sessionStorage.getItem('syncFatto') === '1'; } catch { /* facoltativo */ }
+  const vai = async () => {
+    setBusy(true); setMsg('');
+    try { const m = await avviaSync(true); if (m && m !== 'annullato') setMsg(m); }
+    catch (e) { setMsg(e.message); }
+    finally { setBusy(false); }
+  };
+  const testo = s.conflitto ? 'I dati differiscono da quelli su Google Drive: scegli quali tenere.'
+    : !fatta ? 'Sincronizza con Google Drive per avere i dati aggiornati dall\'altro dispositivo.'
+    : s.sporco ? 'Ci sono modifiche non ancora salvate su Google Drive.' : '';
+  if (!testo && !msg) return null;
+  return html`<div class=${'banner ' + (s.conflitto ? 'danger' : testo ? 'warn' : 'info') + ' sync-banner'}>
+    <span>${testo || msg}</span>
+    ${testo && html`<button class="btn small primary" disabled=${busy || !online} onClick=${vai}>${busy ? 'Sincronizzo…' : s.conflitto ? 'Scegli' : 'Sincronizza'}</button>`}
+  </div>`;
+}
+
 // ---------- Google Drive ----------
 
 // Riquadro nel verbale chiuso: salva PDF e Word nella cartella del cantiere su Drive.
@@ -1297,11 +1371,21 @@ function DriveImpostazioni() {
   const imp = useLive(() => getImpostazioni());
   const sospesi = useLive(() => verbaliDaInviare(), []);
   const online = useOnline();
+  const sync = useSync();
   const [stato, setStato] = useState({ busy: false, msg: '' });
   if (!imp || !sospesi) return null;
   const collega = async () => {
     setStato({ busy: true, msg: 'Apro l\'accesso a Google…' });
-    try { await accediDrive({ conferma: true }); setStato({ busy: false, msg: 'Google Drive collegato.' }); }
+    try {
+      await accediDrive({ conferma: true });
+      setStato({ busy: true, msg: 'Google Drive collegato. Sincronizzo i dati…' });
+      const m = await avviaSync(true);
+      setStato({ busy: false, msg: 'Google Drive collegato. ' + (m && m !== 'annullato' ? m : '') });
+    } catch (e) { setStato({ busy: false, msg: e.message }); }
+  };
+  const sincronizzaOra = async () => {
+    setStato({ busy: true, msg: 'Sincronizzo i dati con Google Drive…' });
+    try { const m = await avviaSync(true); setStato({ busy: false, msg: m === 'annullato' ? '' : m }); }
     catch (e) { setStato({ busy: false, msg: e.message }); }
   };
   const salvaTutti = async () => {
@@ -1320,10 +1404,13 @@ function DriveImpostazioni() {
     ${!driveConfigurato() ? html`<p class="muted">Il collegamento a Google Drive è in preparazione.</p>`
     : PROVA ? html`<p class="muted">Disponibile nell'app installata.</p>`
     : imp.driveCollegato ? html`
-      <p class="muted">Ogni verbale chiuso viene salvato in PDF e Word in <b>${CARTELLA_PRINCIPALE} / [nome del cantiere]</b>.</p>
+      <p class="muted">Ogni verbale chiuso viene salvato in PDF e Word in <b>${CARTELLA_PRINCIPALE} / [nome del cantiere]</b>.
+        Anche i dati dell'app (cantieri, imprese, verbali, foto) si sincronizzano tra tablet e PC.</p>
+      <p class="hint">Ultima sincronizzazione: <b>${sync.ultima ? new Date(sync.ultima).toLocaleString('it-IT') : 'mai'}</b>${sync.sporco ? ' · modifiche da caricare' : ''}</p>
       <div class="row-btns">
+        <button class="btn small primary" disabled=${stato.busy || !online} onClick=${sincronizzaOra}>Sincronizza ora</button>
         ${imp.driveCartellaId && html`<a class="btn small" href=${linkCartella(imp.driveCartellaId)} target="_blank" rel="noopener">Apri la cartella</a>`}
-        ${sospesi.length > 0 && html`<button class="btn small primary" disabled=${stato.busy || !online} onClick=${salvaTutti}>Salva ${sospesi.length} verbali in sospeso</button>`}
+        ${sospesi.length > 0 && html`<button class="btn small" disabled=${stato.busy || !online} onClick=${salvaTutti}>Salva ${sospesi.length} verbali in sospeso</button>`}
         <button class="btn small ghost" onClick=${scollega}>Scollega</button>
       </div>`
     : html`
@@ -1567,6 +1654,14 @@ function App() {
     if (PROVA || !('serviceWorker' in navigator)) return;
     // Con la rete il service worker prende sempre i file più recenti: gli aggiornamenti arrivano da soli.
     navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => {});
+  }, []);
+  // Sincronizzazione automatica all'avvio e al ritorno della rete, se l'accesso a Google è ancora attivo.
+  useEffect(() => {
+    if (PROVA) return;
+    const prova = () => avviaSync(false).catch(() => {});
+    prova();
+    addEventListener('online', prova);
+    return () => removeEventListener('online', prova);
   }, []);
 
   const [sez, a, b] = r;
