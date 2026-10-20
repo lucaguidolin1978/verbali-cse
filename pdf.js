@@ -75,7 +75,13 @@ export async function caricaDati(verbaleId) {
 
   const cse = [s.titolo, s.nome].filter(Boolean).join(' ');
   const nomeImpresa = id => imprese[id]?.ragioneSociale || '—';
-  return { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa };
+  // Imprese di una voce della checklist: per le NC quelle delle schede NC, per le voci conformi quelle scelte nella checklist.
+  const impreseVoce = voceId => {
+    const e = v.esiti[voceId] || {};
+    const ids = e.esito === 'nc' ? ncVerbale.filter(n => n.voceId === voceId).map(n => n.impresaId) : (e.imprese || []);
+    return [...new Set(ids.filter(Boolean))].map(nomeImpresa).join(', ') || (e.esito === 'nc' ? 'da indicare' : 'tutte');
+  };
+  return { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, impreseVoce };
 }
 
 // Nome dei file del verbale (senza estensione), uguale per PDF e Word.
@@ -84,7 +90,7 @@ export const nomeFileVerbale = (v, c) =>
 
 export async function generaPdf(verbaleId) {
   const pm = await pdfMake();
-  const { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa } = await caricaDati(verbaleId);
+  const { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, impreseVoce } = await caricaDati(verbaleId);
   const content = [];
 
   // Intestazione
@@ -176,7 +182,7 @@ export async function generaPdf(verbaleId) {
     ],
     fontSize: 8, color: '#444', margin: [0, 0, 0, 6]
   });
-  const body = [['Voce', 'Esito', 'Note'].map(t => ({ text: t, style: 'th' }))];
+  const body = [['Voce', 'Esito', 'Impresa', 'Note'].map(t => ({ text: t, style: 'th' }))];
   const naPerArea = [];
   for (const area of CHECKLIST) {
     const voci = area.voci.filter(x => ['c', 'nc'].includes(v.esiti[x.id]?.esito));
@@ -184,17 +190,18 @@ export async function generaPdf(verbaleId) {
     const nv = area.voci.filter(x => !v.esiti[x.id]?.esito).length;
     if (na || nv) naPerArea.push(`${area.titolo}: ${[na && na + ' N.A.', nv && nv + ' non verificate'].filter(Boolean).join(', ')}`);
     if (!voci.length) continue;
-    body.push([{ text: area.titolo, colSpan: 3, bold: true, fillColor: '#f3f1ee' }, {}, {}]);
+    body.push([{ text: area.titolo, colSpan: 4, bold: true, fillColor: '#f3f1ee' }, {}, {}, {}]);
     for (const voce of voci) {
       const e = v.esiti[voce.id];
       body.push([
         { text: [voce.testo, { text: `  (${voce.rif})`, color: '#777', fontSize: 7 }] },
         { text: ESITO[e.esito], bold: true, alignment: 'center', color: e.esito === 'nc' ? '#b91c1c' : '#15803d' },
+        { text: impreseVoce(voce.id), fontSize: 8 },
         [e.nota, rifFoto(f => f.tipo === 'voce' && f.voceId === voce.id)].filter(Boolean).join('\n')
       ]);
     }
   }
-  content.push(body.length > 1 ? { table: { headerRows: 1, widths: ['*', 36, 150], body }, layout: 'lightHorizontalLines', fontSize: 9 }
+  content.push(body.length > 1 ? { table: { headerRows: 1, widths: ['*', 32, 95, 115], body }, layout: 'lightHorizontalLines', fontSize: 9 }
     : { text: 'Nessuna voce verificata.', italics: true });
   if (naPerArea.length) content.push({ text: 'Voci non applicabili o non verificate — ' + naPerArea.join('; ') + '.', style: 'small', margin: [0, 4, 0, 8] });
 

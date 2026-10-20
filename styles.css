@@ -399,6 +399,16 @@ h3 { font-size: 1.1rem; }
 .card.nc .nc-head .btn:not(.danger) { background: var(--surface); color: var(--text); }
 .card.nc.late { border-color: var(--red); border-width: 2px; }
 
+/* Imprese di una voce della checklist */
+.imprese-voce { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.chip {
+  min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--field);
+  background: var(--surface); color: var(--text); font: inherit; font-size: .9rem; font-weight: 500; cursor: pointer;
+}
+.chip.on.c { background: var(--green); border-color: var(--green); color: #fff; }
+.chip.on.nc { background: var(--red); border-color: var(--red); color: #fff; }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .dlg-scelte { display: flex; flex-direction: column; gap: 8px; }
 .dlg-scelte .btn { width: 100%; }
 .sync-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -44,7 +44,7 @@ export async function generaWord(verbaleId) {
     Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ImageRun,
     AlignmentType, BorderStyle, Footer, PageNumber, ShadingType
   } = D;
-  const { v, bozza, rev, num, c, s, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, imprese } = await caricaDati(verbaleId);
+  const { v, bozza, rev, num, c, s, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, imprese, impreseVoce } = await caricaDati(verbaleId);
 
   const ARANCIO = 'C2410C', GRIGIO = '555555';
   const p = (testo, opz = {}) => new Paragraph({ spacing: { after: 80 }, ...opz, children: [new TextRun({ text: testo ?? '', ...(opz.run || {}) })] });
@@ -155,7 +155,7 @@ export async function generaWord(verbaleId) {
   // Esito delle verifiche con legenda
   children.push(sezione('Esito delle verifiche'));
   children.push(piccolo('Legenda: C = conforme; NC = non conforme; N.A. = non applicabile; non verificata = voce non controllata in questo sopralluogo. Gravità NC: lieve · grave · pericolo grave e imminente (art. 92 c.1 lett. f).'));
-  const righe = [intestazione(['Voce', 'Esito', 'Note'], [60, 10, 30])];
+  const righe = [intestazione(['Voce', 'Esito', 'Impresa', 'Note'], [48, 8, 20, 24])];
   const naPerArea = [];
   for (const area of CHECKLIST) {
     const voci = area.voci.filter(x => ['c', 'nc'].includes(v.esiti[x.id]?.esito));
@@ -163,13 +163,14 @@ export async function generaWord(verbaleId) {
     const nv = area.voci.filter(x => !v.esiti[x.id]?.esito).length;
     if (na || nv) naPerArea.push(`${area.titolo}: ${[na && na + ' N.A.', nv && nv + ' non verificate'].filter(Boolean).join(', ')}`);
     if (!voci.length) continue;
-    righe.push(new TableRow({ children: [cella(area.titolo, { span: 3, fill: 'F3F1EE', run: { bold: true } })] }));
+    righe.push(new TableRow({ children: [cella(area.titolo, { span: 4, fill: 'F3F1EE', run: { bold: true } })] }));
     for (const voce of voci) {
       const e = v.esiti[voce.id];
       righe.push(new TableRow({ children: [
-        cella(new Paragraph({ children: [new TextRun({ text: voce.testo }), new TextRun({ text: `  (${voce.rif})`, size: 14, color: '777777' })] }), { w: 60 }),
-        cella(ESITO[e.esito], { w: 10, run: { bold: true, color: e.esito === 'nc' ? 'B91C1C' : '15803D' } }),
-        cella([e.nota, rifFoto(f => f.tipo === 'voce' && f.voceId === voce.id)].filter(Boolean).join(' – '), { w: 30 })
+        cella(new Paragraph({ children: [new TextRun({ text: voce.testo }), new TextRun({ text: `  (${voce.rif})`, size: 14, color: '777777' })] }), { w: 48 }),
+        cella(ESITO[e.esito], { w: 8, run: { bold: true, color: e.esito === 'nc' ? 'B91C1C' : '15803D' } }),
+        cella(impreseVoce(voce.id), { w: 20, run: { size: 16 } }),
+        cella([e.nota, rifFoto(f => f.tipo === 'voce' && f.voceId === voce.id)].filter(Boolean).join(' – '), { w: 24 })
       ] }));
     }
   }

@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '11 · 20/10/2026';
+const VERSIONE = '12 · 20/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -923,26 +923,59 @@ function PassoVerificaNC({ v, upd, cantiere, imprese, vid }) {
   })}`;
 }
 
-function PassoChecklist({ v, upd, cantiere, vid }) {
+// Le non conformità di una voce della checklist: una per ogni impresa scelta (una sola, senza impresa, se non se ne sceglie nessuna).
+async function allineaNC({ vid, cantiereId, voceId, imprese }) {
+  const esistenti = await db.nonConformita.where('verbaleId').equals(vid).filter(n => n.voceId === voceId).toArray();
+  const volute = imprese.length ? imprese : [null];
+  const modello = esistenti[0] || {
+    descrizione: `Non conforme: ${VOCI[voceId].testo.charAt(0).toLowerCase()}${VOCI[voceId].testo.slice(1)}`,
+    gravita: 'grave', prescrizione: '', termine: ''
+  };
+  const restanti = [...esistenti];
+  const daAggiungere = [];
+  for (const imp of volute) {
+    const i = restanti.findIndex(n => (n.impresaId ?? null) === imp);
+    if (i >= 0) restanti.splice(i, 1); else daAggiungere.push(imp);
+  }
+  // Una NC rimasta senza corrispondenza si riassegna (si conservano prescrizione e foto), le altre si tolgono.
+  for (const imp of daAggiungere) {
+    const riusa = restanti.shift();
+    if (riusa) await db.nonConformita.update(riusa.id, { impresaId: imp });
+    else await db.nonConformita.add({
+      cantiereId, verbaleId: vid, voceId, descrizione: modello.descrizione, gravita: modello.gravita,
+      impresaId: imp, prescrizione: modello.prescrizione, termine: modello.termine, stato: 'aperta', bozza: true, creato: Date.now()
+    });
+  }
+  const ids = restanti.map(n => n.id);
+  if (ids.length) { await db.foto.where('ncId').anyOf(ids).delete(); await db.nonConformita.bulkDelete(ids); }
+}
+
+function PassoChecklist({ v, upd, cantiere, vid, imprese }) {
   const [aperta, setAperta] = useState(CHECKLIST[0].id);
+  const nomi = Object.fromEntries(imprese.map(i => [i.id, i.ragioneSociale]));
+  // Imprese proponibili: prima le presenti, poi le altre associate al cantiere.
+  const elencoImprese = [...v.presenze].sort((a, b) => b.presente - a.presente).filter(p => nomi[p.impresaId]);
   const setVoce = (voceId, patch) => upd(cur => ({ ...cur, esiti: { ...cur.esiti, [voceId]: { ...(cur.esiti[voceId] || {}), ...patch } } }));
   const setEsito = async (voceId, esito) => {
     const prev = v.esiti[voceId]?.esito;
     const nuovo = prev === esito ? null : esito;
     if (prev === 'nc' && nuovo !== 'nc') {
       const ncs = await db.nonConformita.where('verbaleId').equals(vid).filter(n => n.voceId === voceId).toArray();
-      if (ncs.some(n => n.prescrizione) && !await chiedi('Rimuovere la non conformità già compilata per questa voce?')) return;
+      if (ncs.some(n => n.prescrizione) && !await chiedi('Rimuovere le non conformità già compilate per questa voce?')) return;
       const ids = ncs.map(n => n.id);
       await db.foto.where('ncId').anyOf(ids).delete();
       await db.nonConformita.bulkDelete(ids);
     }
     if (nuovo === 'nc' && prev !== 'nc') {
-      await db.nonConformita.add({
-        cantiereId: cantiere.id, verbaleId: vid, voceId, descrizione: `Non conforme: ${VOCI[voceId].testo.charAt(0).toLowerCase()}${VOCI[voceId].testo.slice(1)}`, gravita: 'grave',
-        impresaId: null, prescrizione: '', termine: '', stato: 'aperta', bozza: true, creato: Date.now()
-      });
+      await allineaNC({ vid, cantiereId: cantiere.id, voceId, imprese: v.esiti[voceId]?.imprese || [] });
     }
     setVoce(voceId, { esito: nuovo });
+  };
+  const toggleImpresa = async (voceId, impresaId) => {
+    const attuali = v.esiti[voceId]?.imprese || [];
+    const imprese2 = attuali.includes(impresaId) ? attuali.filter(x => x !== impresaId) : [...attuali, impresaId];
+    setVoce(voceId, { imprese: imprese2 });
+    if (v.esiti[voceId]?.esito === 'nc') await allineaNC({ vid, cantiereId: cantiere.id, voceId, imprese: imprese2 });
   };
   const tuttiConformi = (area) => upd(cur => {
     const esiti = { ...cur.esiti };
@@ -980,11 +1013,19 @@ function PassoChecklist({ v, upd, cantiere, vid }) {
                   html`<button class=${e.esito === k ? 'on ' + k : ''} onClick=${() => setEsito(voce.id, k)} aria-pressed=${e.esito === k}>${l}</button>`)}
               </div>
             </div>
+            ${(e.esito === 'c' || e.esito === 'nc') && html`<div class="imprese-voce" role="group" aria-label="Imprese interessate">
+              <span class="hint">${e.esito === 'nc' ? 'Impresa responsabile:' : 'Impresa:'}</span>
+              ${elencoImprese.length ? elencoImprese.map(p => {
+                const on = (e.imprese || []).includes(p.impresaId);
+                return html`<button type="button" class=${'chip' + (on ? ' on ' + e.esito : '')} aria-pressed=${on}
+                  onClick=${() => toggleImpresa(voce.id, p.impresaId)}>${nomi[p.impresaId]}</button>`;
+              }) : html`<span class="hint">nessuna impresa associata al cantiere (passo 2)</span>`}
+            </div>`}
             ${e.esito === 'nc' || e.nota || e.dettagli ? html`
               <${Field} label="Nota" rows=${2} mic value=${e.nota} onInput=${x => setVoce(voce.id, { nota: x })} />
               <${Foto} match=${{ verbaleId: vid, voceId: voce.id, tipo: 'voce' }} />`
             : e.esito && html`<button class="btn small ghost" onClick=${() => setVoce(voce.id, { dettagli: true })}>+ Nota / foto</button>`}
-            ${e.esito === 'nc' && html`<p class="hint">Completa prescrizione e termine al passo «Non conformità».</p>`}
+            ${e.esito === 'nc' && html`<p class="hint">${(e.imprese || []).length > 1 ? `Verranno create ${e.imprese.length} non conformità, una per impresa. ` : ''}Completa prescrizione e termine al passo «Non conformità».</p>`}
           </div>`;
         })}
       </div>`}
