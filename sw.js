@@ -1,7 +1,7 @@
 // Service worker: permette l'uso completamente offline.
 // File dell'app: si prende la versione più recente quando c'è rete (entro 4 secondi),
 // altrimenti la copia salvata. Librerie esterne: sempre dalla copia salvata.
-const CACHE_VERSION = 'v19';
+const CACHE_VERSION = 'v20';
 const CACHE = 'verbali-cse-' + CACHE_VERSION;
 
 const APP = [

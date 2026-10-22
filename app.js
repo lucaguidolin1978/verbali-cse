@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '19 · 22/10/2026';
+const VERSIONE = '20 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -1035,53 +1035,78 @@ function PassoIntestazione({ v, upd, cantiere }) {
 }
 
 // Elenco facoltativo degli operai nella scheda dell'impresa (si salva con «Salva»).
+const pulisciNome = n => (n || '').trim().replace(/\s+/g, ' ');
+const stessoNome = (a, b) => a.toLowerCase() === b.toLowerCase();
+
 function LavoratoriImpresa({ lavoratori, onCambia }) {
   const [nome, setNome] = useState('');
+  const [inModifica, setInModifica] = useState(null); // { vecchio, nuovo }
+  const ordina = l => [...l].sort((a, b) => a.localeCompare(b));
   const aggiungi = () => {
-    const pulito = nome.trim().replace(/\s+/g, ' ');
-    if (pulito && !lavoratori.some(o => o.toLowerCase() === pulito.toLowerCase())) onCambia([...lavoratori, pulito].sort((a, b) => a.localeCompare(b)));
+    const pulito = pulisciNome(nome);
+    if (pulito && !lavoratori.some(o => stessoNome(o, pulito))) onCambia(ordina([...lavoratori, pulito]));
     setNome('');
+  };
+  const confermaModifica = () => {
+    const pulito = pulisciNome(inModifica.nuovo);
+    if (!pulito) return;
+    if (lavoratori.some(o => o !== inModifica.vecchio && stessoNome(o, pulito))) { avviso(`${pulito} è già in elenco.`); return; }
+    onCambia(ordina(lavoratori.map(o => o === inModifica.vecchio ? pulito : o)));
+    setInModifica(null);
+  };
+  const elimina = async o => {
+    if (await chiedi(`Togliere ${o} dall'elenco degli operai? I verbali già chiusi non cambiano.`, 'Elimina')) onCambia(lavoratori.filter(x => x !== o));
   };
   return html`<section class="card">
     <h3>Operai <small class="muted">(facoltativo)</small></h3>
-    <p class="hint">I nominativi inseriti qui si scelgono con un tocco nelle presenze del sopralluogo.</p>
-    ${lavoratori.length > 0 && html`<div class="chips">${lavoratori.map(o => html`<button type="button" class="chip on c" aria-label=${'Togli ' + o}
-      onClick=${() => onCambia(lavoratori.filter(x => x !== o))}>${o} ✕</button>`)}</div>`}
+    <p class="hint">Nel sopralluogo, spuntando l'impresa come presente, compare questo elenco: spunta gli operai presenti.</p>
+    ${lavoratori.length > 0 ? html`<ul class="operai-elenco">${lavoratori.map(o => inModifica?.vecchio === o
+      ? html`<li class="in-modifica"><form class="field-row" onSubmit=${e => { e.preventDefault(); confermaModifica(); }}>
+          <input value=${inModifica.nuovo} onInput=${e => setInModifica({ ...inModifica, nuovo: e.target.value })} aria-label=${'Nuovo nome per ' + o} autocomplete="off" />
+          <button type="submit" class="btn small primary" disabled=${!inModifica.nuovo.trim()}>Salva</button>
+          <button type="button" class="btn small ghost" onClick=${() => setInModifica(null)}>Annulla</button></form></li>`
+      : html`<li><span>${o}</span>
+          <button type="button" class="btn small" onClick=${() => setInModifica({ vecchio: o, nuovo: o })}>Modifica</button>
+          <button type="button" class="btn small ghost danger" onClick=${() => elimina(o)}>Elimina</button></li>`)}</ul>`
+      : html`<p class="muted">Nessun operaio inserito.</p>`}
     <form class="field-row operai-form" onSubmit=${e => { e.preventDefault(); aggiungi(); }}>
       <input value=${nome} onInput=${e => setNome(e.target.value)} placeholder="Nome e cognome" aria-label="Nome e cognome dell'operaio" autocomplete="off" />
       <button type="submit" class="btn" disabled=${!nome.trim()}>Aggiungi</button>
     </form>
+    ${lavoratori.length > 0 && html`<p class="hint">Ricorda di premere «Salva» in alto.</p>`}
   </section>`;
 }
 
-// Nominativi facoltativi degli operai di un'impresa presente. I nomi usati restano nell'anagrafica
-// dell'impresa (campo "lavoratori") e la volta successiva si scelgono con un tocco.
+// Operai di un'impresa presente: elenco degli operai della scheda impresa da spuntare.
+// Un operaio nuovo inserito qui viene aggiunto anche alla scheda dell'impresa.
 function OperaiPresenti({ presenza, impresa, onCambia }) {
   const operai = presenza.operai || [];
-  const [aperto, setAperto] = useState(operai.length > 0);
+  const elenco = impresa?.lavoratori || [];
+  // Anche i nomi spuntati che non sono più nella scheda impresa (es. rinominati) restano visibili.
+  const tutti = [...elenco, ...operai.filter(o => !elenco.includes(o))];
+  const [aggiungendo, setAggiungendo] = useState(false);
   const [nome, setNome] = useState('');
-  const conosciuti = (impresa?.lavoratori || []).filter(n => !operai.includes(n));
-  const aggiungi = async n => {
-    const pulito = n.trim().replace(/\s+/g, ' ');
-    if (!pulito || operai.some(o => o.toLowerCase() === pulito.toLowerCase())) { setNome(''); return; }
-    onCambia([...operai, pulito]);
+  const spunta = (o, on) => onCambia(on ? [...operai.filter(x => x !== o), o] : operai.filter(x => x !== o));
+  const aggiungi = async () => {
+    const pulito = pulisciNome(nome);
     setNome('');
-    if (impresa && !(impresa.lavoratori || []).some(o => o.toLowerCase() === pulito.toLowerCase())) {
-      await db.imprese.update(impresa.id, { lavoratori: [...(impresa.lavoratori || []), pulito].sort((a, b) => a.localeCompare(b)) });
-    }
+    if (!pulito) return;
+    const esistente = tutti.find(o => stessoNome(o, pulito));
+    if (!esistente && impresa) await db.imprese.update(impresa.id, { lavoratori: [...elenco, pulito].sort((a, b) => a.localeCompare(b)) });
+    spunta(esistente || pulito, true);
+    setAggiungendo(false);
   };
-  if (!aperto) return html`<button type="button" class="btn small ghost operai-apri" onClick=${() => setAperto(true)}>+ Nominativi operai</button>`;
   return html`<div class="operai">
-    <div class="operai-testa"><span class="hint">Operai presenti${operai.length ? ` (${operai.length})` : ''}</span>
-      ${!operai.length && html`<button type="button" class="btn small ghost" onClick=${() => setAperto(false)}>Chiudi</button>`}</div>
-    ${operai.length > 0 && html`<div class="chips">${operai.map(o => html`<button type="button" class="chip on c" aria-label=${'Togli ' + o}
-      onClick=${() => onCambia(operai.filter(x => x !== o))}>${o} ✕</button>`)}</div>`}
-    ${conosciuti.length > 0 && html`<div class="chips"><span class="hint">Già registrati:</span>${conosciuti.map(o => html`<button type="button" class="chip"
-      onClick=${() => aggiungi(o)}>+ ${o}</button>`)}</div>`}
-    <form class="field-row" onSubmit=${e => { e.preventDefault(); aggiungi(nome); }}>
-      <input value=${nome} onInput=${e => setNome(e.target.value)} placeholder="Nome e cognome" aria-label="Nome e cognome dell'operaio" autocomplete="off" />
-      <button type="submit" class="btn" disabled=${!nome.trim()}>Aggiungi</button>
-    </form>
+    <div class="operai-testa"><span class="hint">Operai presenti: ${operai.length} di ${tutti.length}</span>
+      ${tutti.length > 1 && html`<button type="button" class="btn small ghost" onClick=${() => onCambia(operai.length === tutti.length ? [] : [...tutti])}>
+        ${operai.length === tutti.length ? 'Togli tutti' : 'Seleziona tutti'}</button>`}</div>
+    ${tutti.length > 0 && html`<div class="operai-spunte">${tutti.map(o => html`<label class="check">
+      <input type="checkbox" checked=${operai.includes(o)} onChange=${e => spunta(o, e.target.checked)} /><span>${o}</span></label>`)}</div>`}
+    ${aggiungendo || !tutti.length
+      ? html`<form class="field-row" onSubmit=${e => { e.preventDefault(); aggiungi(); }}>
+          <input value=${nome} onInput=${e => setNome(e.target.value)} placeholder="Nome e cognome nuovo operaio" aria-label="Nome e cognome dell'operaio" autocomplete="off" />
+          <button type="submit" class="btn" disabled=${!nome.trim()}>Aggiungi</button></form>`
+      : html`<button type="button" class="btn small ghost operai-nuovo" onClick=${() => setAggiungendo(true)}>+ Nuovo operaio</button>`}
   </div>`;
 }
 
