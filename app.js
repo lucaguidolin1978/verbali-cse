@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '18 · 22/10/2026';
+const VERSIONE = '19 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -494,6 +494,7 @@ async function caricaEsempio() {
 }
 
 async function nuovoSopralluogo(cantiereId, passo = 0) {
+  if ((await db.cantieri.get(cantiereId))?.stato === 'chiuso') { avviso('Il cantiere è chiuso: riaprilo per fare un nuovo sopralluogo.'); return; }
   const esistente = await db.verbali.where('cantiereId').equals(cantiereId).filter(v => v.stato === 'bozza').first();
   if (esistente) { go(`/sopralluogo/${esistente.id}/${passo}`); return; }
   const imprese = await impreseDelCantiere(cantiereId);
@@ -507,20 +508,29 @@ async function nuovoSopralluogo(cantiereId, passo = 0) {
 
 // ---------- Cantieri ----------
 
-function CantieriList() {
+// Elenco dei cantieri diviso in due schede: aperti (#/cantieri) e chiusi (#/cantieri/chiusi).
+function CantieriList({ chiusi }) {
   const list = useLive(() => db.cantieri.toArray());
-  const [mostraChiusi, setMostraChiusi] = useState(false);
-  if (!list) return null;
-  const vis = list.filter(c => mostraChiusi || c.stato !== 'chiuso');
+  const verbali = useLive(() => db.verbali.toArray());
+  if (!list || !verbali) return null;
+  const aperti = list.filter(c => c.stato !== 'chiuso');
+  const fermi = list.filter(c => c.stato === 'chiuso').sort((a, b) => (b.dataChiusura || '').localeCompare(a.dataChiusura || ''));
+  const vis = chiusi ? fermi : aperti;
+  const nVerbali = id => verbali.filter(v => v.cantiereId === id && v.stato === 'chiuso').length;
   return html`<${Header} title="Cantieri">
     <button class="btn small primary" onClick=${() => go('/cantieri/nuovo')}><${Icon} d=${I.plus} size=${18} /> Nuovo</button>
   <//>
   <main>
-    <label class="check"><input type="checkbox" checked=${mostraChiusi} onChange=${e => setMostraChiusi(e.target.checked)} /> Mostra cantieri chiusi</label>
+    <div class="schede-cantieri" role="tablist">
+      <a role="tab" class=${chiusi ? '' : 'on'} aria-selected=${!chiusi} href="#/cantieri">Aperti <b>${aperti.length}</b></a>
+      <a role="tab" class=${chiusi ? 'on' : ''} aria-selected=${!!chiusi} href="#/cantieri/chiusi">Chiusi <b>${fermi.length}</b></a>
+    </div>
     ${vis.length ? html`<div class="card list">${vis.map(c => html`<a class="row" href=${`#/cantieri/${c.id}`}>
-      <span><b>${c.denominazione || 'Cantiere senza nome'}</b><small>${[c.indirizzo, c.comune].filter(Boolean).join(', ')}</small></span>
-      ${c.stato === 'chiuso' && html`<span class="tag">Chiuso</span>`}
-    </a>`)}</div>` : html`<${Empty}>Nessun cantiere.<//>`}
+      <span><b>${c.denominazione || 'Cantiere senza nome'}</b><small>${chiusi
+        ? `Chiuso${c.dataChiusura ? ' il ' + fmtData(c.dataChiusura) : ''} · ${nVerbali(c.id)} verbali`
+        : [c.indirizzo, c.comune].filter(Boolean).join(', ')}</small></span>
+      ${chiusi ? html`<span class="tag">Chiuso</span>` : c.stato === 'sospeso' && html`<span class="tag amber">Sospeso</span>`}
+    </a>`)}</div>` : html`<${Empty}>${chiusi ? 'Nessun cantiere chiuso.' : 'Nessun cantiere aperto.'}<//>`}
   </main>`;
 }
 
@@ -569,13 +579,36 @@ function CantiereForm({ id }) {
     // Tolta dal cantiere: sparisce anche dalle presenze dei sopralluoghi in corso (i verbali chiusi restano com'erano).
     await togliImpresaDalleBozze(cid, impresaId);
   };
+  // Cantiere chiuso: va nell'elenco dei chiusi, la scheda e i verbali restano consultabili in sola lettura.
+  const chiuso = !nuovo && c.stato === 'chiuso';
+  const chiudiCantiere = async () => {
+    if (verbali.some(v => v.stato === 'bozza')) {
+      avviso('C\'è un sopralluogo in corso su questo cantiere: chiudi il verbale o elimina la bozza prima di chiudere il cantiere.');
+      return;
+    }
+    const ncAperte = await db.nonConformita.where('cantiereId').equals(c.id).filter(n => !n.bozza && n.stato !== 'risolta').count();
+    const testo = `Chiudere il cantiere «${c.denominazione}»? Passerà nell'elenco dei cantieri chiusi, dove potrai sempre vedere la scheda e i verbali. ` +
+      (ncAperte ? `Ci sono ancora ${ncAperte} non conformità aperte: restano nel registro NC. ` : '') + 'Potrai riaprirlo quando vuoi.';
+    if (!await chiedi(testo, 'Chiudi cantiere')) return;
+    await db.cantieri.put({ ...c, stato: 'chiuso', dataChiusura: oggiISO() });
+    go('/cantieri/chiusi');
+  };
+  const riapriCantiere = async () => {
+    if (!await chiedi(`Riaprire il cantiere «${c.denominazione}»? Tornerà tra i cantieri attivi nella Home e potrai aggiungere nuovi verbali.`, 'Riapri')) return;
+    await db.cantieri.put({ ...c, stato: 'attivo', dataChiusura: '' });
+    go('/');
+  };
 
-  return html`<${Header} title=${nuovo ? 'Nuovo cantiere' : c.denominazione || 'Cantiere'} back="/cantieri">
-    <button class="btn small primary" disabled=${!dirty && !nuovo} onClick=${salva}>Salva</button>
+  return html`<${Header} title=${nuovo ? 'Nuovo cantiere' : c.denominazione || 'Cantiere'} back=${chiuso ? '/cantieri/chiusi' : '/cantieri'}>
+    ${!chiuso && html`<button class="btn small primary" disabled=${!dirty && !nuovo} onClick=${salva}>Salva</button>`}
   <//>
   <main>
-    ${!nuovo && html`<button class="btn primary big" onClick=${() => nuovoSopralluogo(c.id)}>
+    ${chiuso && html`<div class="banner chiuso-banner">
+      <span><b>Cantiere chiuso${c.dataChiusura ? ' il ' + fmtData(c.dataChiusura) : ''}.</b> Scheda e verbali sono in sola lettura.</span>
+      <button class="btn small primary" onClick=${riapriCantiere}>Riapri cantiere</button></div>`}
+    ${!nuovo && !chiuso && html`<button class="btn primary big" onClick=${() => nuovoSopralluogo(c.id)}>
       <${Icon} d=${I.plus} /> Nuovo sopralluogo</button>`}
+    <fieldset class="sola-lettura" disabled=${chiuso}>
     <section class="card">
       <h3>Dati del cantiere</h3>
       ${f('denominazione', 'Denominazione / oggetto dei lavori')}
@@ -586,7 +619,7 @@ function CantiereForm({ id }) {
       ${f('titoloAbilitativo', 'Titolo abilitativo (PdC, SCIA…)')}
       <div class="grid2">${f('dataInizio', 'Inizio lavori', { type: 'date' })}${f('dataFine', 'Fine presunta', { type: 'date' })}</div>
       <div class="grid2">${f('importo', 'Importo lavori (€)', { inputmode: 'decimal' })}
-        ${f('stato', 'Stato', { options: [['attivo', 'Attivo'], ['sospeso', 'Sospeso'], ['chiuso', 'Chiuso']] })}</div>
+        ${chiuso ? f('stato', 'Stato', { options: [['chiuso', 'Chiuso']] }) : f('stato', 'Stato', { options: [['attivo', 'Attivo'], ['sospeso', 'Sospeso']] })}</div>
     </section>
     <section class="card">
       <h3>Soggetti</h3>
@@ -595,8 +628,9 @@ function CantiereForm({ id }) {
       <div class="grid2">${f('dl', 'Direttore dei lavori')}${f('dlEmail', 'Email/PEC DL', { type: 'email' })}</div>
       <div class="grid2">${f('csp', 'Coordinatore in progettazione (CSP)')}${f('cse', 'Coordinatore in esecuzione (CSE)')}</div>
     </section>
+    </fieldset>
     ${nuovo ? html`<p class="hint center">Salva il cantiere per associare le imprese.</p>` : html`
-    <${ImpreseCantiere} cantiereId=${c.id} imprese=${imprese} links=${links} onToggle=${toggleImpresa} />
+    <${ImpreseCantiere} cantiereId=${c.id} imprese=${imprese} links=${links} onToggle=${toggleImpresa} chiuso=${chiuso} />
     <section class="card list">
       <h3>Verbali</h3>
       ${verbali.length ? verbali.map(v => html`<a class="row" href=${v.stato === 'bozza' ? `#/sopralluogo/${v.id}/0` : `#/verbale/${v.id}`}>
@@ -604,6 +638,8 @@ function CantiereForm({ id }) {
         ${v.stato === 'bozza' && html`<span class="tag amber">In corso</span>`}</a>`)
         : html`<${Empty}>Nessun verbale.<//>`}
     </section>
+    ${chiuso ? html`<button class="btn primary" onClick=${riapriCantiere}>Riapri cantiere</button>`
+      : html`<button class="btn" onClick=${chiudiCantiere}>Chiudi cantiere</button>`}
     <button class="btn danger ghost" onClick=${eliminaQuesto}>Elimina cantiere</button>`}
   </main>`;
 }
@@ -654,7 +690,8 @@ function AggiungiImpresa({ cantiereId, imprese, esclusi, onAggiungi, ritorno }) 
 }
 
 // Imprese del cantiere: elenco di quelle associate, più aggiunta da menu, da ricerca o da nuova P.IVA.
-function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
+// Con il cantiere chiuso ("chiuso") l'elenco è in sola lettura: restano i contatti.
+function ImpreseCantiere({ cantiereId, imprese, links, onToggle, chiuso }) {
   const associate = imprese.filter(i => links.some(l => l.impresaId === i.id));
   const legame = id => links.find(l => l.impresaId === id);
   const [posAperto, setPosAperto] = useState(null);
@@ -666,16 +703,17 @@ function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
     <h3>Imprese e lavoratori autonomi del cantiere</h3>
     ${associate.length ? html`<div class="imprese-cantiere">${associate.map(i => html`<div class="impresa-riga">
         <a href=${`#/imprese/${i.id}`}><b>${i.ragioneSociale}</b><small>${[TIPI_IMPRESA[i.tipo], i.piva && 'P.IVA ' + i.piva].filter(Boolean).join(' · ')}</small></a>
-        <button type="button" class="btn small" aria-expanded=${posAperto === i.id} onClick=${() => setPosAperto(posAperto === i.id ? null : i.id)}>
-          <${StatoPos} impresa=${i} legame=${legame(i.id)} /></button>
+        ${chiuso ? html`<${StatoPos} impresa=${i} legame=${legame(i.id)} />`
+          : html`<button type="button" class="btn small" aria-expanded=${posAperto === i.id} onClick=${() => setPosAperto(posAperto === i.id ? null : i.id)}>
+          <${StatoPos} impresa=${i} legame=${legame(i.id)} /></button>`}
         <${ContattiRapidi} impresa=${i} />
-        <button type="button" class="btn small ghost danger" onClick=${() => togli(i)}>Togli</button>
-        ${posAperto === i.id && html`<${PosCantiere} impresa=${i} legame=${legame(i.id)} />`}
+        ${!chiuso && html`<button type="button" class="btn small ghost danger" onClick=${() => togli(i)}>Togli</button>`}
+        ${!chiuso && posAperto === i.id && html`<${PosCantiere} impresa=${i} legame=${legame(i.id)} />`}
       </div>`)}</div>
-      <p class="hint">Tocca lo stato del POS per indicarlo o aggiornarlo per questo cantiere.</p>`
-      : html`<p class="muted">Nessuna impresa ancora associata a questo cantiere.</p>`}
-    <${AggiungiImpresa} cantiereId=${cantiereId} imprese=${imprese} esclusi=${associate.map(i => i.id)}
-      onAggiungi=${id => onToggle(id, true)} ritorno=${`/cantieri/${cantiereId}`} />
+      ${!chiuso && html`<p class="hint">Tocca lo stato del POS per indicarlo o aggiornarlo per questo cantiere.</p>`}`
+      : html`<p class="muted">Nessuna impresa associata a questo cantiere.</p>`}
+    ${!chiuso && html`<${AggiungiImpresa} cantiereId=${cantiereId} imprese=${imprese} esclusi=${associate.map(i => i.id)}
+      onAggiungi=${id => onToggle(id, true)} ritorno=${`/cantieri/${cantiereId}`} />`}
   </section>`;
 }
 
@@ -1489,6 +1527,7 @@ function VerbaleView({ id }) {
 
   return html`<${Header} title=${`Verbale n. ${v.numero}${v.revisione ? ' – Rev. ' + v.revisione : ''}`} back=${`/cantieri/${c.id}`} />
   <main>
+    ${c.stato === 'chiuso' && html`<div class="banner chiuso-banner"><span><b>Cantiere chiuso.</b> Il verbale è consultabile e si può ancora inviare.</span></div>`}
     <section class="card">
       <h3>${c.denominazione}</h3>
       <p class="muted">Sopralluogo del ${fmtData(v.data)} ${v.oraInizio ? `ore ${v.oraInizio}${v.oraFine ? '–' + v.oraFine : ''}` : ''}</p>
@@ -1511,10 +1550,12 @@ function VerbaleView({ id }) {
         <button class="btn" disabled=${busy} onClick=${scaricaPdf}>Scarica PDF</button>
         <button class="btn" disabled=${busy} onClick=${scaricaWord}>Scarica Word</button>
         <button class="btn" disabled=${busy} onClick=${email}>Email con PDF allegato</button>`}
-      <div class="row-btns">
+      ${c.stato === 'chiuso'
+        ? html`<p class="hint">Cantiere chiuso: per modificare o eliminare il verbale riapri prima il cantiere.</p>`
+        : html`<div class="row-btns">
         <button class="btn" onClick=${modifica}>Modifica verbale</button>
         <button class="btn ghost danger" onClick=${elimina}>Elimina verbale</button>
-      </div>
+      </div>`}
       ${msg && html`<p class="hint">${msg}</p>`}
       ${vedi && html`<${AnteprimaPdf} file=${vedi} onClose=${() => setVedi(null)} azioni=${PROVA ? null : html`
         <button class="btn ghost" onClick=${() => setVedi(null)}>Chiudi</button>
@@ -1928,13 +1969,13 @@ function App() {
   // Un indirizzo con un identificativo non valido (es. un link vecchio) riporta alla Home invece di dare errore.
   const idOk = x => /^\d+$/.test(x || '');
   const nonValido = (sez === 'sopralluogo' || sez === 'verbale') ? !idOk(a)
-    : (sez === 'cantieri' && a) ? !(idOk(a) || a === 'nuovo')
+    : (sez === 'cantieri' && a) ? !(idOk(a) || a === 'nuovo' || a === 'chiusi')
     : (sez === 'imprese' && a) ? !(idOk(a) || a === 'nuova') : false;
   let page;
   if (nonValido) page = html`<${Home} />`;
   else if (sez === 'sopralluogo') page = html`<${Sopralluogo} id=${a} step=${b} />`;
   else if (sez === 'verbale') page = html`<${VerbaleView} id=${a} />`;
-  else if (sez === 'cantieri') page = a ? html`<${CantiereForm} key=${a} id=${a} />` : html`<${CantieriList} />`;
+  else if (sez === 'cantieri') page = a && a !== 'chiusi' ? html`<${CantiereForm} key=${a} id=${a} />` : html`<${CantieriList} chiusi=${a === 'chiusi'} />`;
   else if (sez === 'imprese') page = a ? html`<${ImpresaForm} key=${a + (b || '') + precompila} id=${a} cantiere=${b} precompila=${precompila} />` : html`<${ImpreseList} />`;
   else if (sez === 'nc') page = html`<${RegistroNC} filtro=${a} key=${a} />`;
   else if (sez === 'catalogo') page = html`<${CatalogoPage} />`;
