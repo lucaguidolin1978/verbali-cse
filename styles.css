@@ -412,6 +412,18 @@ h3 { font-size: 1.1rem; }
 .risultati-impresa .btn { align-self: flex-start; margin: 4px 12px 0; }
 .risultati-impresa .hint { margin: 6px 12px 0; }
 
+/* Anagrafica imprese */
+.cerca-elenco { margin: 4px 0 4px; }
+.impresa-scheda { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.impresa-scheda:last-child { border-bottom: 0; }
+.impresa-scheda > a { flex: 1 1 220px; display: flex; flex-direction: column; min-width: 0; color: var(--text); text-decoration: none; }
+.impresa-scheda .contatti-rapidi { margin: 0; }
+
+/* POS dell'impresa nel cantiere */
+.pos-cantiere { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.pos-cantiere .grid2 { margin-top: 4px; }
+.pos-cantiere .field { margin-bottom: 0; }
+
 /* Contatti rapidi (chiama / scrivi) */
 .contatti-rapidi { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .contatti-rapidi .btn { gap: 6px; }

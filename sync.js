@@ -138,7 +138,8 @@ async function unisciDati(remoto) {
     for (const l of T.cantiereImprese || []) {
       const cantiereId = mappa.cantieri.get(l.cantiereId), impresaId = mappa.imprese.get(l.impresaId);
       if (cantiereId && impresaId && !legami.some(x => x.cantiereId === cantiereId && x.impresaId === impresaId)) {
-        await db.cantiereImprese.add({ cantiereId, impresaId });
+        // Il legame porta con sé anche i dati del POS di quel cantiere.
+        await db.cantiereImprese.add({ ...senzaId(l), cantiereId, impresaId });
       }
     }
     const imp = id => mappa.imprese.get(id) ?? id;

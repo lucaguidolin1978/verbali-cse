@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '17 · 22/10/2026';
+const VERSIONE = '18 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -656,6 +656,8 @@ function AggiungiImpresa({ cantiereId, imprese, esclusi, onAggiungi, ritorno }) 
 // Imprese del cantiere: elenco di quelle associate, più aggiunta da menu, da ricerca o da nuova P.IVA.
 function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
   const associate = imprese.filter(i => links.some(l => l.impresaId === i.id));
+  const legame = id => links.find(l => l.impresaId === id);
+  const [posAperto, setPosAperto] = useState(null);
   const togli = async i => {
     if (await chiedi(`Togliere ${i.ragioneSociale} da questo cantiere? Sparirà anche dalle presenze dei sopralluoghi in corso; i verbali già chiusi non cambiano e l'impresa resta in anagrafica.`, 'Togli')) onToggle(i.id, false);
   };
@@ -663,11 +665,14 @@ function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
   return html`<section class="card">
     <h3>Imprese e lavoratori autonomi del cantiere</h3>
     ${associate.length ? html`<div class="imprese-cantiere">${associate.map(i => html`<div class="impresa-riga">
-        <a href=${`#/imprese/${i.id}`}><b>${i.ragioneSociale}</b><small>${[TIPI_IMPRESA[i.tipo], i.piva && 'P.IVA ' + i.piva].filter(Boolean).join(' · ')}</small>
-          <span><${StatoPos} impresa=${i} /></span></a>
+        <a href=${`#/imprese/${i.id}`}><b>${i.ragioneSociale}</b><small>${[TIPI_IMPRESA[i.tipo], i.piva && 'P.IVA ' + i.piva].filter(Boolean).join(' · ')}</small></a>
+        <button type="button" class="btn small" aria-expanded=${posAperto === i.id} onClick=${() => setPosAperto(posAperto === i.id ? null : i.id)}>
+          <${StatoPos} impresa=${i} legame=${legame(i.id)} /></button>
         <${ContattiRapidi} impresa=${i} />
         <button type="button" class="btn small ghost danger" onClick=${() => togli(i)}>Togli</button>
-      </div>`)}</div>`
+        ${posAperto === i.id && html`<${PosCantiere} impresa=${i} legame=${legame(i.id)} />`}
+      </div>`)}</div>
+      <p class="hint">Tocca lo stato del POS per indicarlo o aggiornarlo per questo cantiere.</p>`
       : html`<p class="muted">Nessuna impresa ancora associata a questo cantiere.</p>`}
     <${AggiungiImpresa} cantiereId=${cantiereId} imprese=${imprese} esclusi=${associate.map(i => i.id)}
       onAggiungi=${id => onToggle(id, true)} ritorno=${`/cantieri/${cantiereId}`} />
@@ -678,8 +683,30 @@ function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
 
 const TIPI_IMPRESA = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lavoratore autonomo / artigiano' };
 
-// Il POS serve alle imprese; per il lavoratore autonomo di norma no. La spunta nella scheda impresa decide.
-const posRichiesto = i => i?.posRichiesto ?? (i?.tipo !== 'autonomo');
+// Il POS è di ogni cantiere: i dati stanno nel legame cantiere–impresa ("legame"). Per i dati inseriti
+// quando il POS era nella scheda impresa si usano quelli come valore iniziale.
+// Il POS serve alle imprese; per il lavoratore autonomo di norma no.
+const datiPos = (impresa, legame) => ({
+  richiesto: legame?.posRichiesto ?? impresa?.posRichiesto ?? (impresa?.tipo !== 'autonomo'),
+  ricevuto: legame?.posRicevuto ?? impresa?.posRicevuto ?? '',
+  verificato: legame?.posVerificato ?? impresa?.posVerificato ?? ''
+});
+
+// Gestione del POS di un'impresa in un cantiere (si salva subito).
+function PosCantiere({ impresa, legame }) {
+  const p = datiPos(impresa, legame);
+  const salva = patch => db.cantiereImprese.update(legame.id, { posRichiesto: p.richiesto, posRicevuto: p.ricevuto, posVerificato: p.verificato, ...patch });
+  return html`<div class="pos-cantiere">
+    <label class="check"><input type="checkbox" checked=${p.richiesto} onChange=${e => salva({ posRichiesto: e.target.checked })} />
+      Serve il POS per questo cantiere</label>
+    ${impresa.tipo === 'autonomo' && html`<p class="hint">Lavoratore autonomo / artigiano senza dipendenti: di norma non redige il POS, che spetta al datore di lavoro
+      dell'impresa esecutrice (art. 89 c.1 lett. h). Restano da verificare l'idoneità (All. XVII) e il rispetto dell'art. 94.</p>`}
+    ${p.richiesto && html`<div class="grid2">
+      <${Field} label="POS ricevuto il" type="date" value=${p.ricevuto} onInput=${x => salva({ posRicevuto: x })} />
+      <${Field} label="Verificato idoneo il (art. 92 c.1 lett. b)" type="date" value=${p.verificato} onInput=${x => salva({ posVerificato: x })} />
+    </div>`}
+  </div>`;
+}
 
 // Pulsanti per chiamare o scrivere all'impresa (aprono il telefono o l'app di posta del dispositivo).
 const numeroTel = n => (n || '').replace(/[^\d+]/g, '');
@@ -697,24 +724,35 @@ function ContattiRapidi({ impresa, completo }) {
   </div>`;
 }
 
-function StatoPos({ impresa }) {
+function StatoPos({ impresa, legame }) {
   if (!impresa) return null;
-  if (!posRichiesto(impresa)) return html`<span class="tag">POS non richiesto</span>`;
-  if (impresa.posVerificato) return html`<span class="tag green">POS verificato</span>`;
-  return html`<span class="tag amber">${impresa.posRicevuto ? 'POS da verificare' : 'POS mancante'}</span>`;
+  const p = datiPos(impresa, legame);
+  if (!p.richiesto) return html`<span class="tag">POS non richiesto</span>`;
+  if (p.verificato) return html`<span class="tag green">POS verificato</span>`;
+  return html`<span class="tag amber">${p.ricevuto ? 'POS da verificare' : 'POS mancante'}</span>`;
 }
 
+// Anagrafica imprese: dati essenziali e pulsanti per chiamare o scrivere (il POS si gestisce nel cantiere).
 function ImpreseList() {
   const list = useLive(() => db.imprese.orderBy('ragioneSociale').toArray());
+  const [cerca, setCerca] = useState('');
   if (!list) return null;
+  const parole = cerca.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const vis = list.filter(i => parole.every(p => [i.ragioneSociale, i.piva, i.referente, i.sede].join(' ').toLowerCase().includes(p)));
   return html`<${Header} title="Imprese">
     <button class="btn small primary" onClick=${() => go('/imprese/nuova')}><${Icon} d=${I.plus} size=${18} /> Nuova</button>
   <//>
   <main>
-    ${list.length ? html`<div class="card list">${list.map(i => html`<a class="row" href=${`#/imprese/${i.id}`}>
-      <span><b>${i.ragioneSociale}</b><small>${TIPI_IMPRESA[i.tipo] || ''}${i.referente ? ' · ' + i.referente : ''}</small></span>
-<${StatoPos} impresa=${i} />
-    </a>`)}</div>` : html`<${Empty}>Nessuna impresa.<//>`}
+    ${list.length > 5 && html`<input type="search" class="cerca-elenco" placeholder="Cerca impresa per nome, P.IVA o referente" aria-label="Cerca impresa"
+      value=${cerca} onInput=${e => setCerca(e.target.value)} />`}
+    ${vis.length ? html`<div class="card list">${vis.map(i => html`<div class="impresa-scheda">
+      <a href=${`#/imprese/${i.id}`}>
+        <b>${i.ragioneSociale}</b>
+        <small>${[TIPI_IMPRESA[i.tipo], i.piva && 'P.IVA ' + i.piva].filter(Boolean).join(' · ')}</small>
+        ${(i.referente || i.sede) && html`<small>${[i.referente && 'Referente: ' + i.referente, i.sede].filter(Boolean).join(' · ')}</small>`}
+      </a>
+      <${ContattiRapidi} impresa=${i} />
+    </div>`)}</div>` : html`<${Empty}>${list.length ? 'Nessuna impresa trovata.' : 'Nessuna impresa.'}<//>`}
   </main>`;
 }
 
@@ -874,15 +912,6 @@ function ImpresaForm({ id, cantiere, precompila }) {
       <div class="grid2">${f('datoreLavoro', 'Datore di lavoro')}${f('rspp', 'RSPP')}</div>
       <div class="grid2">${f('preposto', 'Preposto')}${f('referente', 'Referente in cantiere')}</div>
     </section>
-    <section class="card">
-      <h3>POS (art. 92 c.1 lett. b)</h3>
-      <label class="check"><input type="checkbox" checked=${posRichiesto(i)}
-        onChange=${e => set({ ...i, posRichiesto: e.target.checked })} /> Serve il POS</label>
-      ${i.tipo === 'autonomo' && html`<p class="hint">Lavoratore autonomo / artigiano senza dipendenti: di norma non redige il POS, che spetta al datore di lavoro
-        dell'impresa esecutrice (art. 89 c.1 lett. h). Restano da verificare l'idoneità tecnico-professionale (All. XVII) e il rispetto dell'art. 94.</p>`}
-      ${posRichiesto(i) ? html`<div class="grid2">${f('posRicevuto', 'Ricevuto il', { type: 'date' })}${f('posVerificato', 'Verificato idoneo il', { type: 'date' })}</div>`
-        : html`<p class="muted">POS non richiesto per questa ditta.</p>`}
-    </section>
     <${LavoratoriImpresa} lavoratori=${i.lavoratori || []} onCambia=${lavoratori => { setI(cur => ({ ...cur, lavoratori })); setDirty(true); }} />
     ${!nuova && html`<button class="btn danger ghost" onClick=${elimina}>Elimina impresa</button>`}
   </main>`;
@@ -1019,6 +1048,7 @@ function OperaiPresenti({ presenza, impresa, onCambia }) {
 }
 
 function PassoPresenze({ v, upd, imprese, cantiere }) {
+  const legamiCantiere = useLive(() => db.cantiereImprese.where('cantiereId').equals(cantiere.id).toArray(), [cantiere.id]);
   const nomi = Object.fromEntries(imprese.map(i => [i.id, i]));
   const setPres = (idx, patch) => upd(cur => ({ ...cur, presenze: cur.presenze.map((p, i) => i === idx ? { ...p, ...patch } : p) }));
   // L'elenco delle presenze segue le imprese associate al cantiere; quella appena creata qui risulta già presente.
@@ -1057,7 +1087,7 @@ function PassoPresenze({ v, upd, imprese, cantiere }) {
       <div class="pres">
         <label class="check"><input type="checkbox" checked=${p.presente} onChange=${e => setPres(idx, { presente: e.target.checked })} />
           <span><b>${nomi[p.impresaId]?.ragioneSociale || 'Impresa rimossa'}</b> <small>${TIPI_IMPRESA[nomi[p.impresaId]?.tipo] || ''}</small>
-            ${p.presente && html` <${StatoPos} impresa=${nomi[p.impresaId]} />`}</span></label>
+            ${p.presente && html` <${StatoPos} impresa=${nomi[p.impresaId]} legame=${legamiCantiere?.find(l => l.impresaId === p.impresaId)} />`}</span></label>
         ${p.presente && html`<input class="num" type="number" min="0" inputmode="numeric" placeholder="Addetti" aria-label="Numero addetti"
           value=${p.addetti} onInput=${e => setPres(idx, { addetti: e.target.value })} />`}
       </div>

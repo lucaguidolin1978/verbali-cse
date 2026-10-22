@@ -26,11 +26,13 @@ async function pdfMake() {
 
 export const ESITO = { c: 'C', nc: 'NC', na: 'N.A.' };
 export const TIPI = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lav. autonomo' };
-// Tipo della ditta con lo stato del POS (per i lavoratori autonomi di norma non richiesto).
-export const tipoEPos = i => {
+// Tipo della ditta con lo stato del POS in quel cantiere (dati nel legame cantiere–impresa;
+// per i dati inseriti in precedenza nella scheda impresa si usano quelli). Lavoratori autonomi: di norma non richiesto.
+export const tipoEPos = (i, legame) => {
   if (!i) return '';
-  const richiesto = i.posRichiesto ?? (i.tipo !== 'autonomo');
-  const pos = !richiesto ? 'POS non richiesto' : i.posVerificato ? `POS verificato il ${fmtData(i.posVerificato)}` : 'POS non ancora verificato';
+  const richiesto = legame?.posRichiesto ?? i.posRichiesto ?? (i.tipo !== 'autonomo');
+  const verificato = legame?.posVerificato ?? i.posVerificato;
+  const pos = !richiesto ? 'POS non richiesto' : verificato ? `POS verificato il ${fmtData(verificato)}` : 'POS non ancora verificato';
   return `${TIPI[i.tipo] || ''}\n${pos}`;
 };
 const ACCENTO = '#c2410c';
@@ -52,6 +54,9 @@ const kv = (rows) => ({
 });
 
 const sezione = (t) => ({ text: t.toUpperCase(), style: 'h2' });
+
+// Solo immagini vere (firme, logo): un dato rovinato non deve bloccare il PDF.
+export const immagineValida = s => typeof s === 'string' && /^data:image\/(png|jpe?g);base64,/.test(s);
 
 // Tutti i dati di un verbale, usati sia dal PDF sia dal Word.
 export async function caricaDati(verbaleId) {
@@ -82,13 +87,15 @@ export async function caricaDati(verbaleId) {
 
   const cse = [s.titolo, s.nome].filter(Boolean).join(' ');
   const nomeImpresa = id => imprese[id]?.ragioneSociale || '—';
+  const legami = Object.fromEntries((await db.cantiereImprese.where('cantiereId').equals(c.id).toArray()).map(l => [l.impresaId, l]));
+  const posImpresa = id => tipoEPos(imprese[id], legami[id]);
   // Imprese di una voce della checklist: per le NC quelle delle schede NC, per le voci conformi quelle scelte nella checklist.
   const impreseVoce = voceId => {
     const e = v.esiti[voceId] || {};
     const ids = e.esito === 'nc' ? ncVerbale.filter(n => n.voceId === voceId).map(n => n.impresaId) : (e.imprese || []);
     return [...new Set(ids.filter(Boolean))].map(nomeImpresa).join(', ') || (e.esito === 'nc' ? 'da indicare' : 'tutte');
   };
-  return { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, impreseVoce };
+  return { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, impreseVoce, posImpresa };
 }
 
 // Nome dei file del verbale (senza estensione), uguale per PDF e Word.
@@ -97,14 +104,14 @@ export const nomeFileVerbale = (v, c) =>
 
 export async function generaPdf(verbaleId) {
   const pm = await pdfMake();
-  const { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, impreseVoce } = await caricaDati(verbaleId);
+  const { v, bozza, rev, num, c, s, imprese, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, impreseVoce, posImpresa } = await caricaDati(verbaleId);
   const content = [];
 
   // Intestazione
   content.push({
     columns: [
       // Logo caricato nelle Impostazioni, altrimenti il logo dello studio (versione bicolore).
-      s.logo ? { image: s.logo, fit: [110, 60], width: 120 } : { svg: LOGO_CHIARO, width: 62, height: 62 },
+      immagineValida(s.logo) ? { image: s.logo, fit: [110, 60], width: 120 } : { svg: LOGO_CHIARO, width: 62, height: 62 },
       { stack: [
         { text: cse || 'Coordinatore per la sicurezza', bold: true, fontSize: 11 },
         { text: 'Coordinatore per la sicurezza in fase di esecuzione', fontSize: 9 },
@@ -152,7 +159,7 @@ export async function generaPdf(verbaleId) {
         p.operai?.length
           ? { text: [nomeImpresa(p.impresaId), { text: '\nOperai: ' + p.operai.join(', '), fontSize: 8, color: '#555' }] }
           : nomeImpresa(p.impresaId),
-        tipoEPos(imprese[p.impresaId]), { text: p.addetti || '—', alignment: 'center' }])
+        posImpresa(p.impresaId), { text: p.addetti || '—', alignment: 'center' }])
     ] }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 6]
   } : { text: 'Nessuna impresa presente.', italics: true, margin: [0, 0, 0, 6] });
   if (v.persone.length) {
@@ -272,14 +279,14 @@ export async function generaPdf(verbaleId) {
   firme.push({ stack: [
     { text: 'Il Coordinatore per la sicurezza in fase di esecuzione', fontSize: 8, color: '#555' },
     { text: cse, bold: true },
-    v.firmaCSE ? { image: v.firmaCSE, fit: [160, 60] } : { text: '\n\n' }
+    immagineValida(v.firmaCSE) ? { image: v.firmaCSE, fit: [160, 60] } : { text: '\n\n' }
   ], unbreakable: true, margin: [0, 0, 0, 12] });
   for (const p of v.persone) {
     firme.push({ stack: [
       { text: [p.ruolo, p.impresaId && nomeImpresa(p.impresaId)].filter(Boolean).join(' – ') || 'Presente', fontSize: 8, color: '#555' },
       { text: p.nome || '', bold: true },
       p.rifiuto ? { text: 'Non firma', italics: true, margin: [0, 10, 0, 10] }
-        : p.firma ? { image: p.firma, fit: [160, 60] } : { text: '\n\n_____________________' }
+        : immagineValida(p.firma) ? { image: p.firma, fit: [160, 60] } : { text: '\n\n_____________________' }
     ], unbreakable: true, margin: [0, 0, 0, 12] });
   }
   const righeFirme = [];
@@ -317,7 +324,11 @@ export async function generaPdf(verbaleId) {
     content
   };
 
-  const blob = await new Promise(res => pm.createPdf(dd).getBlob(res));
+  // Se la creazione non termina (dato rovinato), si segnala l'errore invece di restare in attesa.
+  const blob = await new Promise((res, rej) => {
+    const limite = setTimeout(() => rej(new Error('creazione del PDF non riuscita: controlla firme e logo')), 60000);
+    try { pm.createPdf(dd).getBlob(b => { clearTimeout(limite); res(b); }); } catch (e) { clearTimeout(limite); rej(e); }
+  });
   const nome = nomeFileVerbale(v, c) + '.pdf';
   return new File([blob], nome, { type: 'application/pdf' });
 }

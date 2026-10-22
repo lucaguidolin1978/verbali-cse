@@ -3,7 +3,7 @@
 import { CHECKLIST, GRAVITA } from './checklist.js';
 import { fmtData, blobToDataURL } from './util.js';
 import { LOGO_CHIARO } from './logo.js';
-import { caricaDati, nomeFileVerbale, ESITO, TIPI, tipoEPos, testoNormativo, testoChiusura, testoGDPR } from './pdf.js';
+import { caricaDati, nomeFileVerbale, ESITO, TIPI, tipoEPos, testoNormativo, testoChiusura, testoGDPR, immagineValida } from './pdf.js';
 
 export const DOCX_URL = 'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js';
 
@@ -44,7 +44,7 @@ export async function generaWord(verbaleId) {
     Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ImageRun,
     AlignmentType, BorderStyle, Footer, PageNumber, ShadingType
   } = D;
-  const { v, bozza, rev, num, c, s, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, imprese, impreseVoce } = await caricaDati(verbaleId);
+  const { v, bozza, rev, num, c, s, ncVerbale, ncVerificate, verbaliCantiere, tutteFoto, fotoN, rifFoto, cse, nomeImpresa, imprese, impreseVoce, posImpresa } = await caricaDati(verbaleId);
 
   const ARANCIO = 'C2410C', GRIGIO = '555555';
   const p = (testo, opz = {}) => new Paragraph({ spacing: { after: 80 }, ...opz, children: [new TextRun({ text: testo ?? '', ...(opz.run || {}) })] });
@@ -73,7 +73,7 @@ export async function generaWord(verbaleId) {
   const children = [];
 
   // Intestazione con logo e dati del CSE
-  const logo = await immagine(s.logo || await logoPng(), 90, 70);
+  const logo = await immagine(immagineValida(s.logo) ? s.logo : await logoPng(), 90, 70);
   const nessunBordo = { top: { style: BorderStyle.NIL }, bottom: { style: BorderStyle.NIL }, left: { style: BorderStyle.NIL }, right: { style: BorderStyle.NIL } };
   children.push(new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -131,7 +131,7 @@ export async function generaWord(verbaleId) {
         cella(x.operai?.length
           ? new Paragraph({ children: [new TextRun({ text: nomeImpresa(x.impresaId) }), new TextRun({ text: 'Operai: ' + x.operai.join(', '), break: 1, size: 16, color: GRIGIO })] })
           : nomeImpresa(x.impresaId), { w: 60 }),
-        cella(new Paragraph({ children: tipoEPos(imprese[x.impresaId]).split('\n').map((t, k) => new TextRun({ text: t, break: k ? 1 : 0, size: k ? 16 : 20, color: k ? GRIGIO : undefined })) }), { w: 25 }),
+        cella(new Paragraph({ children: posImpresa(x.impresaId).split('\n').map((t, k) => new TextRun({ text: t, break: k ? 1 : 0, size: k ? 16 : 20, color: k ? GRIGIO : undefined })) }), { w: 25 }),
         cella(x.addetti || '—', { w: 15 })] }))
     ]));
   } else children.push(p('Nessuna impresa presente.', { run: { italics: true } }));
@@ -221,7 +221,7 @@ export async function generaWord(verbaleId) {
   const firma = async (titolo, nome, dataUrl, rifiuto) => {
     const out = [piccolo(titolo, { color: GRIGIO }), p(nome || '', { run: { bold: true } })];
     if (rifiuto) out.push(p('Non firma', { run: { italics: true } }));
-    else if (dataUrl) { const im = await immagine(dataUrl, 180, 70); out.push(new Paragraph({ children: [new ImageRun({ data: im.data, transformation: { width: im.width, height: im.height } })] })); }
+    else if (immagineValida(dataUrl)) { const im = await immagine(dataUrl, 180, 70); out.push(new Paragraph({ children: [new ImageRun({ data: im.data, transformation: { width: im.width, height: im.height } })] })); }
     else out.push(p('_____________________'));
     return out;
   };
