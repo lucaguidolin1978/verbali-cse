@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '21 · 22/10/2026';
+const VERSIONE = '22 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -528,6 +528,8 @@ function CantieriList({ chiusi }) {
       <a role="tab" class=${chiusi ? '' : 'on'} aria-selected=${!chiusi} href="#/cantieri">Aperti <b>${aperti.length}</b></a>
       <a role="tab" class=${chiusi ? 'on' : ''} aria-selected=${!!chiusi} href="#/cantieri/chiusi">Chiusi <b>${fermi.length}</b></a>
     </div>
+    ${!chiusi && !PROVA && driveConfigurato() && html`<a class="btn primary big" href="#/notifiche">
+      <${Icon} d=${I.plus} /> Nuovo cantiere da notifica preliminare</a>`}
     ${vis.length ? html`<div class="card list">${vis.map(c => html`<a class="row" href=${`#/cantieri/${c.id}`}>
       <span><b>${c.denominazione || 'Cantiere senza nome'}</b><small>${chiusi
         ? `Chiuso${c.dataChiusura ? ' il ' + fmtData(c.dataChiusura) : ''} · ${nVerbali(c.id)} verbali`
