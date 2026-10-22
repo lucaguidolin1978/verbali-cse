@@ -26,6 +26,13 @@ async function pdfMake() {
 
 export const ESITO = { c: 'C', nc: 'NC', na: 'N.A.' };
 export const TIPI = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lav. autonomo' };
+// Tipo della ditta con lo stato del POS (per i lavoratori autonomi di norma non richiesto).
+export const tipoEPos = i => {
+  if (!i) return '';
+  const richiesto = i.posRichiesto ?? (i.tipo !== 'autonomo');
+  const pos = !richiesto ? 'POS non richiesto' : i.posVerificato ? `POS verificato il ${fmtData(i.posVerificato)}` : 'POS non ancora verificato';
+  return `${TIPI[i.tipo] || ''}\n${pos}`;
+};
 const ACCENTO = '#c2410c';
 
 export const testoNormativo = (s) =>
@@ -139,9 +146,13 @@ export async function generaPdf(verbaleId) {
   const presenti = v.presenze.filter(p => p.presente);
   content.push(sezione('Imprese e lavoratori autonomi presenti'));
   content.push(presenti.length ? {
-    table: { headerRows: 1, widths: ['*', 90, 60], body: [
-      [{ text: 'Impresa', style: 'th' }, { text: 'Tipo', style: 'th' }, { text: 'Addetti', style: 'th', alignment: 'center' }],
-      ...presenti.map(p => [nomeImpresa(p.impresaId), TIPI[imprese[p.impresaId]?.tipo] || '', { text: p.addetti || '—', alignment: 'center' }])
+    table: { headerRows: 1, widths: ['*', 130, 50], body: [
+      [{ text: 'Impresa', style: 'th' }, { text: 'Tipo / POS', style: 'th' }, { text: 'Addetti', style: 'th', alignment: 'center' }],
+      ...presenti.map(p => [
+        p.operai?.length
+          ? { text: [nomeImpresa(p.impresaId), { text: '\nOperai: ' + p.operai.join(', '), fontSize: 8, color: '#555' }] }
+          : nomeImpresa(p.impresaId),
+        tipoEPos(imprese[p.impresaId]), { text: p.addetti || '—', alignment: 'center' }])
     ] }, layout: 'lightHorizontalLines', margin: [0, 0, 0, 6]
   } : { text: 'Nessuna impresa presente.', italics: true, margin: [0, 0, 0, 6] });
   if (v.persone.length) {

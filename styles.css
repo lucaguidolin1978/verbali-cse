@@ -306,7 +306,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .pdf-pagine { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
 .pdf-pagine.con-azioni { padding-bottom: 96px; }
 .pdf-azioni { z-index: 21; }
-.pdf-azioni .btn { min-width: 0; flex: 1; }
+.pdf-azioni .btn { min-width: 0; flex: 1; padding: 0 10px; line-height: 1.1; text-align: center; }
+.pdf-azioni .btn.primary { font-size: 1.15rem; letter-spacing: .02em; }
+.modal .top h1 { text-transform: none; font-family: var(--font-body); font-weight: 600; font-size: 1rem; }
 .pdf-pagine canvas { max-width: 100%; height: auto; background: #fff; box-shadow: var(--shadow); }
 .btn:focus-visible, .icon-btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -398,6 +400,35 @@ h3 { font-size: 1.1rem; }
 .nc-titolo b { font-family: var(--font-display); font-size: 1.25rem; text-transform: uppercase; letter-spacing: .04em; line-height: 1.1; }
 .card.nc .nc-head .btn:not(.danger) { background: var(--surface); color: var(--text); }
 .card.nc.late { border-color: var(--red); border-width: 2px; }
+
+/* Imprese nella scheda del cantiere */
+.imprese-cantiere { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.impresa-riga { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.impresa-riga > a { display: flex; flex-direction: column; min-width: 0; color: var(--text); text-decoration: none; }
+.aggiungi-impresa { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; padding: 14px; border-radius: 10px; background: var(--surface-2); }
+.aggiungi-impresa h4 { margin: 0; font-family: var(--font-display); font-size: 1.15rem; text-transform: uppercase; letter-spacing: .03em; }
+.aggiungi-impresa .field-row select { flex: 1; min-width: 0; }
+.risultati-impresa { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border-radius: 10px; padding: 4px 0 10px; }
+.risultati-impresa .btn { align-self: flex-start; margin: 4px 12px 0; }
+.risultati-impresa .hint { margin: 6px 12px 0; }
+
+/* Contatti rapidi (chiama / scrivi) */
+.contatti-rapidi { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.contatti-rapidi .btn { gap: 6px; }
+.contatti-rapidi.piccoli .btn { min-height: 36px; padding: 0 10px; font-size: .85rem; }
+.impresa-riga { flex-wrap: wrap; }
+.impresa-riga > a { flex: 1 1 200px; }
+
+/* Presenze: operai */
+.pres-blocco { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.pres-blocco .pres { border-bottom: 0; }
+.operai-apri { margin: 0 0 6px 32px; }
+.operai { margin: 0 0 8px 32px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.operai-testa { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.operai form { margin: 0; }
+.operai-form { margin-top: 10px; }
+@media (max-width: 520px) { .operai, .operai-apri { margin-left: 0; } }
 
 /* Imprese di una voce della checklist */
 .imprese-voce { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }

@@ -3,7 +3,7 @@
 import { CHECKLIST, GRAVITA } from './checklist.js';
 import { fmtData, blobToDataURL } from './util.js';
 import { LOGO_CHIARO } from './logo.js';
-import { caricaDati, nomeFileVerbale, ESITO, TIPI, testoNormativo, testoChiusura, testoGDPR } from './pdf.js';
+import { caricaDati, nomeFileVerbale, ESITO, TIPI, tipoEPos, testoNormativo, testoChiusura, testoGDPR } from './pdf.js';
 
 export const DOCX_URL = 'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js';
 
@@ -126,8 +126,13 @@ export async function generaWord(verbaleId) {
   children.push(sezione('Imprese e lavoratori autonomi presenti'));
   if (presenti.length) {
     children.push(tabella([
-      intestazione(['Impresa', 'Tipo', 'Addetti'], [60, 25, 15]),
-      ...presenti.map(x => new TableRow({ children: [cella(nomeImpresa(x.impresaId), { w: 60 }), cella(TIPI[imprese[x.impresaId]?.tipo] || '', { w: 25 }), cella(x.addetti || '—', { w: 15 })] }))
+      intestazione(['Impresa', 'Tipo / POS', 'Addetti'], [55, 32, 13]),
+      ...presenti.map(x => new TableRow({ children: [
+        cella(x.operai?.length
+          ? new Paragraph({ children: [new TextRun({ text: nomeImpresa(x.impresaId) }), new TextRun({ text: 'Operai: ' + x.operai.join(', '), break: 1, size: 16, color: GRIGIO })] })
+          : nomeImpresa(x.impresaId), { w: 60 }),
+        cella(new Paragraph({ children: tipoEPos(imprese[x.impresaId]).split('\n').map((t, k) => new TextRun({ text: t, break: k ? 1 : 0, size: k ? 16 : 20, color: k ? GRIGIO : undefined })) }), { w: 25 }),
+        cella(x.addetti || '—', { w: 15 })] }))
     ]));
   } else children.push(p('Nessuna impresa presente.', { run: { italics: true } }));
   if (v.persone.length) {

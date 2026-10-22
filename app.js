@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '12 · 20/10/2026';
+const VERSIONE = '16 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -95,7 +95,9 @@ const I = {
   cam: ['M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z', 'M12 17a4 4 0 100-8 4 4 0 000 8z'],
   plus: ['M12 5v14', 'M5 12h14'],
   x: ['M18 6L6 18', 'M6 6l12 12'],
-  back: ['M15 18l-6-6 6-6']
+  back: ['M15 18l-6-6 6-6'],
+  telefono: ['M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8 9.8a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z'],
+  posta: ['M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z', 'M22 6l-10 7L2 6']
 };
 
 // ---------- Componenti di input ----------
@@ -592,14 +594,7 @@ function CantiereForm({ id }) {
       <div class="grid2">${f('csp', 'Coordinatore in progettazione (CSP)')}${f('cse', 'Coordinatore in esecuzione (CSE)')}</div>
     </section>
     ${nuovo ? html`<p class="hint center">Salva il cantiere per associare le imprese.</p>` : html`
-    <section class="card">
-      <h3>Imprese e lavoratori autonomi</h3>
-      ${imprese.length ? imprese.map(i => html`<label class="check row-check">
-        <input type="checkbox" checked=${links.some(l => l.impresaId === i.id)} onChange=${e => toggleImpresa(i.id, e.target.checked)} />
-        <span><b>${i.ragioneSociale}</b> <small>${TIPI_IMPRESA[i.tipo] || ''}</small></span></label>`)
-        : html`<${Empty}>Nessuna impresa in anagrafica.<//>`}
-      <a class="btn small ghost" href=${`#/imprese/nuova/${c.id}`}>+ Nuova impresa</a>
-    </section>
+    <${ImpreseCantiere} cantiereId=${c.id} imprese=${imprese} links=${links} onToggle=${toggleImpresa} />
     <section class="card list">
       <h3>Verbali</h3>
       ${verbali.length ? verbali.map(v => html`<a class="row" href=${v.stato === 'bozza' ? `#/sopralluogo/${v.id}/0` : `#/verbale/${v.id}`}>
@@ -611,9 +606,91 @@ function CantiereForm({ id }) {
   </main>`;
 }
 
+// Aggiunta di un'impresa: menu a tendina dell'anagrafica, ricerca per nome o P.IVA, creazione di una nuova.
+// "esclusi" sono gli id già in elenco; "ritorno" è la pagina a cui tornare dopo aver creato un'impresa nuova.
+function AggiungiImpresa({ cantiereId, imprese, esclusi, onAggiungi, ritorno }) {
+  const [scelta, setScelta] = useState('');
+  const [cerca, setCerca] = useState('');
+  const disponibili = imprese.filter(i => !esclusi.includes(i.id)).sort((a, b) => a.ragioneSociale.localeCompare(b.ragioneSociale));
+  const parole = cerca.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const pivaCercata = cerca.replace(/[\s.]/g, '').replace(/^IT/i, '');
+  const risultati = parole.length ? disponibili.filter(i => parole.every(p =>
+    (i.ragioneSociale + ' ' + (i.piva || '') + ' ' + (i.sede || '')).toLowerCase().includes(p))) : [];
+  const giaPresente = /^\d{11}$/.test(pivaCercata) && imprese.some(i => (i.piva || '').replace(/\s/g, '') === pivaCercata);
+  const aggiungi = id => { onAggiungi(id); setScelta(''); setCerca(''); };
+  const vaiANuova = () => { try { sessionStorage.setItem('ritornoImpresa', ritorno || ''); } catch { /* facoltativo */ } };
+  const precompila = /^\d{11}$/.test(pivaCercata) ? pivaCercata : cerca.trim();
+
+  return html`<div class="aggiungi-impresa">
+      <h4>Aggiungi impresa</h4>
+      ${disponibili.length > 0 && html`<div class="field-row">
+        <select aria-label="Scegli un'impresa dall'anagrafica" value=${scelta} onChange=${e => setScelta(e.target.value)}>
+          <option value="">— Scegli dall'anagrafica (${disponibili.length}) —</option>
+          ${disponibili.map(i => html`<option value=${String(i.id)}>${i.ragioneSociale}</option>`)}
+        </select>
+        <button type="button" class="btn primary" disabled=${!scelta} onClick=${() => aggiungi(Number(scelta))}>Aggiungi</button>
+      </div>`}
+      <input type="search" placeholder="Cerca per nome o partita IVA" aria-label="Cerca impresa" value=${cerca} onInput=${e => setCerca(e.target.value)} />
+      ${parole.length > 0 && html`<div class="risultati-impresa">
+        ${risultati.map(i => html`<button type="button" class="row" onClick=${() => aggiungi(i.id)}>
+          <span><b>${i.ragioneSociale}</b><small>${[TIPI_IMPRESA[i.tipo], i.piva].filter(Boolean).join(' · ')}</small></span>
+          <span class="tag green">+ Aggiungi</span></button>`)}
+        ${!risultati.length && html`<p class="hint">${giaPresente ? 'Questa impresa è già in elenco.' : 'Nessuna impresa trovata in anagrafica.'}</p>`}
+        ${!giaPresente && html`<a class="btn small" onClick=${vaiANuova} href=${`#/imprese/nuova/${cantiereId}/${encodeURIComponent(precompila)}`}>
+          ${/^\d{11}$/.test(pivaCercata) ? `+ Crea l'impresa con P.IVA ${pivaCercata} (dati automatici)` : `+ Crea nuova impresa «${cerca.trim()}»`}</a>`}
+      </div>`}
+      ${!parole.length && html`<a class="btn small ghost" onClick=${vaiANuova} href=${`#/imprese/nuova/${cantiereId}`}>+ Nuova impresa</a>`}
+    </div>`;
+}
+
+// Imprese del cantiere: elenco di quelle associate, più aggiunta da menu, da ricerca o da nuova P.IVA.
+function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
+  const associate = imprese.filter(i => links.some(l => l.impresaId === i.id));
+  const togli = async i => { if (await chiedi(`Togliere ${i.ragioneSociale} da questo cantiere? L'impresa resta in anagrafica.`, 'Togli')) onToggle(i.id, false); };
+
+  return html`<section class="card">
+    <h3>Imprese e lavoratori autonomi del cantiere</h3>
+    ${associate.length ? html`<div class="imprese-cantiere">${associate.map(i => html`<div class="impresa-riga">
+        <a href=${`#/imprese/${i.id}`}><b>${i.ragioneSociale}</b><small>${[TIPI_IMPRESA[i.tipo], i.piva && 'P.IVA ' + i.piva].filter(Boolean).join(' · ')}</small>
+          <span><${StatoPos} impresa=${i} /></span></a>
+        <${ContattiRapidi} impresa=${i} />
+        <button type="button" class="btn small ghost danger" onClick=${() => togli(i)}>Togli</button>
+      </div>`)}</div>`
+      : html`<p class="muted">Nessuna impresa ancora associata a questo cantiere.</p>`}
+    <${AggiungiImpresa} cantiereId=${cantiereId} imprese=${imprese} esclusi=${associate.map(i => i.id)}
+      onAggiungi=${id => onToggle(id, true)} ritorno=${`/cantieri/${cantiereId}`} />
+  </section>`;
+}
+
 // ---------- Imprese ----------
 
-const TIPI_IMPRESA = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lavoratore autonomo' };
+const TIPI_IMPRESA = { affidataria: 'Affidataria', esecutrice: 'Esecutrice', autonomo: 'Lavoratore autonomo / artigiano' };
+
+// Il POS serve alle imprese; per il lavoratore autonomo di norma no. La spunta nella scheda impresa decide.
+const posRichiesto = i => i?.posRichiesto ?? (i?.tipo !== 'autonomo');
+
+// Pulsanti per chiamare o scrivere all'impresa (aprono il telefono o l'app di posta del dispositivo).
+const numeroTel = n => (n || '').replace(/[^\d+]/g, '');
+function ContattiRapidi({ impresa, completo }) {
+  if (!impresa) return null;
+  const voci = [
+    impresa.cellulare && { href: 'tel:' + numeroTel(impresa.cellulare), testo: completo ? `Chiama cellulare ${impresa.cellulare}` : 'Cellulare', icona: I.telefono },
+    impresa.telefono && { href: 'tel:' + numeroTel(impresa.telefono), testo: completo ? `Chiama fisso ${impresa.telefono}` : 'Fisso', icona: I.telefono },
+    impresa.email && { href: 'mailto:' + impresa.email.trim(), testo: completo ? `Scrivi email` : 'Email', icona: I.posta },
+    impresa.pec && { href: 'mailto:' + impresa.pec.trim(), testo: completo ? `Scrivi PEC` : 'PEC', icona: I.posta }
+  ].filter(Boolean);
+  if (!voci.length) return completo ? html`<p class="hint">Inserisci un numero o un indirizzo per chiamare o scrivere con un tocco.</p>` : null;
+  return html`<div class=${'contatti-rapidi' + (completo ? '' : ' piccoli')}>
+    ${voci.map(x => html`<a class="btn small" href=${x.href} onClick=${e => e.stopPropagation()}><${Icon} d=${x.icona} size=${18} />${x.testo}</a>`)}
+  </div>`;
+}
+
+function StatoPos({ impresa }) {
+  if (!impresa) return null;
+  if (!posRichiesto(impresa)) return html`<span class="tag">POS non richiesto</span>`;
+  if (impresa.posVerificato) return html`<span class="tag green">POS verificato</span>`;
+  return html`<span class="tag amber">${impresa.posRicevuto ? 'POS da verificare' : 'POS mancante'}</span>`;
+}
 
 function ImpreseList() {
   const list = useLive(() => db.imprese.orderBy('ragioneSociale').toArray());
@@ -624,14 +701,14 @@ function ImpreseList() {
   <main>
     ${list.length ? html`<div class="card list">${list.map(i => html`<a class="row" href=${`#/imprese/${i.id}`}>
       <span><b>${i.ragioneSociale}</b><small>${TIPI_IMPRESA[i.tipo] || ''}${i.referente ? ' · ' + i.referente : ''}</small></span>
-      ${!i.posVerificato && html`<span class="tag amber">POS da verificare</span>`}
+<${StatoPos} impresa=${i} />
     </a>`)}</div>` : html`<${Empty}>Nessuna impresa.<//>`}
   </main>`;
 }
 
 const IMPRESA_VUOTA = {
   ragioneSociale: '', piva: '', sede: '', tipo: 'esecutrice', email: '', pec: '', datoreLavoro: '', rspp: '', preposto: '',
-  referente: '', telefono: '', posRicevuto: '', posVerificato: ''
+  referente: '', telefono: '', cellulare: '', posRicevuto: '', posVerificato: ''
 };
 
 // Ponte (Cloudflare Worker) verso il registro europeo VIES: vedi la cartella ponte-piva.
@@ -649,12 +726,13 @@ function pivaValida(p) {
   return s % 10 === 0;
 }
 
-function RicercaPiva({ impresa, onDati }) {
+function RicercaPiva({ impresa, onDati, nuova }) {
   const online = useOnline();
   const [stato, setStato] = useState({ busy: false, msg: '', tipo: '' });
   const [diversi, setDiversi] = useState(null);
   const piva = (impresa.piva || '').replace(/[\s.]/g, '').replace(/^IT/i, '');
-  const cercata = useRef(piva); // all'apertura di un'impresa già salvata non si cerca di nuovo
+  // All'apertura di un'impresa già salvata non si cerca di nuovo; una nuova con P.IVA già scritta sì.
+  const cercata = useRef(nuova ? '' : piva);
   const ultimo = useRef(impresa); ultimo.current = impresa;
 
   const cerca = async () => {
@@ -722,11 +800,16 @@ function RicercaPiva({ impresa, onDati }) {
   </div>`;
 }
 
-function ImpresaForm({ id, cantiere }) {
+function ImpresaForm({ id, cantiere, precompila }) {
   const nuova = id === 'nuova';
   const [i, setI] = useState(null);
   const [dirty, setDirty] = useState(false);
-  useEffect(() => { nuova ? setI({ ...IMPRESA_VUOTA }) : db.imprese.get(Number(id)).then(setI); }, [id]);
+  useEffect(() => {
+    if (!nuova) { db.imprese.get(Number(id)).then(setI); return; }
+    // Dalla ricerca nella scheda cantiere può arrivare una P.IVA o un nome già scritti.
+    const p = (precompila || '').trim();
+    setI({ ...IMPRESA_VUOTA, ...(/^\d{11}$/.test(p) ? { piva: p } : p ? { ragioneSociale: p } : {}) });
+  }, [id]);
   if (!i) return null;
   const set = v => { setI(v); setDirty(true); };
   const f = binder(i, set);
@@ -734,9 +817,14 @@ function ImpresaForm({ id, cantiere }) {
     if (!i.ragioneSociale.trim()) { avviso('Inserisci la ragione sociale.'); return; }
     if (nuova) {
       const nid = await db.imprese.add(i);
-      // Creata dalla scheda di un cantiere: si associa e si torna lì; altrimenti all'elenco imprese.
-      if (cantiere) { await db.cantiereImprese.add({ cantiereId: Number(cantiere), impresaId: nid }); go(`/cantieri/${cantiere}`); }
-      else go('/imprese');
+      // Creata dalla scheda di un cantiere o da un sopralluogo: si associa al cantiere e si torna da dove si veniva.
+      let ritorno = '';
+      try { ritorno = sessionStorage.getItem('ritornoImpresa') || ''; sessionStorage.removeItem('ritornoImpresa'); } catch { /* facoltativo */ }
+      if (cantiere) {
+        await db.cantiereImprese.add({ cantiereId: Number(cantiere), impresaId: nid });
+        try { sessionStorage.setItem('impresaAppenaCreata', String(nid)); } catch { /* facoltativo */ }
+        go(ritorno || `/cantieri/${cantiere}`);
+      } else go('/imprese');
     }
     else { await db.imprese.put(i); setDirty(false); }
   };
@@ -748,7 +836,9 @@ function ImpresaForm({ id, cantiere }) {
     await db.imprese.delete(i.id);
     go('/imprese');
   };
-  return html`<${Header} title=${nuova ? 'Nuova impresa' : i.ragioneSociale} back=${cantiere ? `/cantieri/${cantiere}` : '/imprese'}>
+  let tornaA = '';
+  try { tornaA = sessionStorage.getItem('ritornoImpresa') || ''; } catch { /* facoltativo */ }
+  return html`<${Header} title=${nuova ? 'Nuova impresa' : i.ragioneSociale} back=${tornaA || (cantiere ? `/cantieri/${cantiere}` : '/imprese')}>
     <button class="btn small primary" disabled=${!dirty && !nuova} onClick=${salva}>Salva</button>
   <//>
   <main>
@@ -756,22 +846,32 @@ function ImpresaForm({ id, cantiere }) {
       ${nuova && html`<p class="hint">Scrivi la partita IVA per caricare in automatico ragione sociale e sede, oppure compila i campi a mano. Poi premi <b>Salva</b>.</p>`}
       <div class="grid2">${f('piva', 'Partita IVA', { inputmode: 'numeric', placeholder: '11 cifre' })}
         ${f('tipo', 'Tipo', { options: Object.entries(TIPI_IMPRESA) })}</div>
-      <${RicercaPiva} impresa=${i} onDati=${d => { setI(cur => ({ ...cur, ...d })); setDirty(true); }} />
+      <${RicercaPiva} impresa=${i} nuova=${nuova} onDati=${d => { setI(cur => ({ ...cur, ...d })); setDirty(true); }} />
       ${f('ragioneSociale', 'Ragione sociale / nominativo')}
       <${IndirizzoAuto} via=${i.sede} etichetta="Sede legale" unico
         onChange=${via => set({ ...i, sede: via })} />
+    </section>
+    <section class="card">
+      <h3>Contatti</h3>
+      <div class="grid2">${f('telefono', 'Telefono fisso', { type: 'tel', inputmode: 'tel', autocomplete: 'off' })}${f('cellulare', 'Cellulare', { type: 'tel', inputmode: 'tel', autocomplete: 'off' })}</div>
       <div class="grid2">${f('email', 'Email', { type: 'email' })}${f('pec', 'PEC', { type: 'email' })}</div>
+      <${ContattiRapidi} impresa=${i} completo />
     </section>
     <section class="card">
       <h3>Figure</h3>
       <div class="grid2">${f('datoreLavoro', 'Datore di lavoro')}${f('rspp', 'RSPP')}</div>
       <div class="grid2">${f('preposto', 'Preposto')}${f('referente', 'Referente in cantiere')}</div>
-      ${f('telefono', 'Telefono', { type: 'tel' })}
     </section>
     <section class="card">
       <h3>POS (art. 92 c.1 lett. b)</h3>
-      <div class="grid2">${f('posRicevuto', 'Ricevuto il', { type: 'date' })}${f('posVerificato', 'Verificato idoneo il', { type: 'date' })}</div>
+      <label class="check"><input type="checkbox" checked=${posRichiesto(i)}
+        onChange=${e => set({ ...i, posRichiesto: e.target.checked })} /> Serve il POS</label>
+      ${i.tipo === 'autonomo' && html`<p class="hint">Lavoratore autonomo / artigiano senza dipendenti: di norma non redige il POS, che spetta al datore di lavoro
+        dell'impresa esecutrice (art. 89 c.1 lett. h). Restano da verificare l'idoneità tecnico-professionale (All. XVII) e il rispetto dell'art. 94.</p>`}
+      ${posRichiesto(i) ? html`<div class="grid2">${f('posRicevuto', 'Ricevuto il', { type: 'date' })}${f('posVerificato', 'Verificato idoneo il', { type: 'date' })}</div>`
+        : html`<p class="muted">POS non richiesto per questa ditta.</p>`}
     </section>
+    <${LavoratoriImpresa} lavoratori=${i.lavoratori || []} onCambia=${lavoratori => { setI(cur => ({ ...cur, lavoratori })); setDirty(true); }} />
     ${!nuova && html`<button class="btn danger ghost" onClick=${elimina}>Elimina impresa</button>`}
   </main>`;
 }
@@ -855,15 +955,81 @@ function PassoIntestazione({ v, upd, cantiere }) {
   </section>`;
 }
 
+// Elenco facoltativo degli operai nella scheda dell'impresa (si salva con «Salva»).
+function LavoratoriImpresa({ lavoratori, onCambia }) {
+  const [nome, setNome] = useState('');
+  const aggiungi = () => {
+    const pulito = nome.trim().replace(/\s+/g, ' ');
+    if (pulito && !lavoratori.some(o => o.toLowerCase() === pulito.toLowerCase())) onCambia([...lavoratori, pulito].sort((a, b) => a.localeCompare(b)));
+    setNome('');
+  };
+  return html`<section class="card">
+    <h3>Operai <small class="muted">(facoltativo)</small></h3>
+    <p class="hint">I nominativi inseriti qui si scelgono con un tocco nelle presenze del sopralluogo.</p>
+    ${lavoratori.length > 0 && html`<div class="chips">${lavoratori.map(o => html`<button type="button" class="chip on c" aria-label=${'Togli ' + o}
+      onClick=${() => onCambia(lavoratori.filter(x => x !== o))}>${o} ✕</button>`)}</div>`}
+    <form class="field-row operai-form" onSubmit=${e => { e.preventDefault(); aggiungi(); }}>
+      <input value=${nome} onInput=${e => setNome(e.target.value)} placeholder="Nome e cognome" aria-label="Nome e cognome dell'operaio" autocomplete="off" />
+      <button type="submit" class="btn" disabled=${!nome.trim()}>Aggiungi</button>
+    </form>
+  </section>`;
+}
+
+// Nominativi facoltativi degli operai di un'impresa presente. I nomi usati restano nell'anagrafica
+// dell'impresa (campo "lavoratori") e la volta successiva si scelgono con un tocco.
+function OperaiPresenti({ presenza, impresa, onCambia }) {
+  const operai = presenza.operai || [];
+  const [aperto, setAperto] = useState(operai.length > 0);
+  const [nome, setNome] = useState('');
+  const conosciuti = (impresa?.lavoratori || []).filter(n => !operai.includes(n));
+  const aggiungi = async n => {
+    const pulito = n.trim().replace(/\s+/g, ' ');
+    if (!pulito || operai.some(o => o.toLowerCase() === pulito.toLowerCase())) { setNome(''); return; }
+    onCambia([...operai, pulito]);
+    setNome('');
+    if (impresa && !(impresa.lavoratori || []).some(o => o.toLowerCase() === pulito.toLowerCase())) {
+      await db.imprese.update(impresa.id, { lavoratori: [...(impresa.lavoratori || []), pulito].sort((a, b) => a.localeCompare(b)) });
+    }
+  };
+  if (!aperto) return html`<button type="button" class="btn small ghost operai-apri" onClick=${() => setAperto(true)}>+ Nominativi operai</button>`;
+  return html`<div class="operai">
+    <div class="operai-testa"><span class="hint">Operai presenti${operai.length ? ` (${operai.length})` : ''}</span>
+      ${!operai.length && html`<button type="button" class="btn small ghost" onClick=${() => setAperto(false)}>Chiudi</button>`}</div>
+    ${operai.length > 0 && html`<div class="chips">${operai.map(o => html`<button type="button" class="chip on c" aria-label=${'Togli ' + o}
+      onClick=${() => onCambia(operai.filter(x => x !== o))}>${o} ✕</button>`)}</div>`}
+    ${conosciuti.length > 0 && html`<div class="chips"><span class="hint">Già registrati:</span>${conosciuti.map(o => html`<button type="button" class="chip"
+      onClick=${() => aggiungi(o)}>+ ${o}</button>`)}</div>`}
+    <form class="field-row" onSubmit=${e => { e.preventDefault(); aggiungi(nome); }}>
+      <input value=${nome} onInput=${e => setNome(e.target.value)} placeholder="Nome e cognome" aria-label="Nome e cognome dell'operaio" autocomplete="off" />
+      <button type="submit" class="btn" disabled=${!nome.trim()}>Aggiungi</button>
+    </form>
+  </div>`;
+}
+
 function PassoPresenze({ v, upd, imprese, cantiere }) {
   const nomi = Object.fromEntries(imprese.map(i => [i.id, i]));
   const setPres = (idx, patch) => upd(cur => ({ ...cur, presenze: cur.presenze.map((p, i) => i === idx ? { ...p, ...patch } : p) }));
+  // L'elenco delle presenze segue le imprese associate al cantiere; quella appena creata qui risulta già presente.
   const aggiornaElenco = async () => {
     const assoc = await impreseDelCantiere(cantiere.id);
+    let appena = 0;
+    try { appena = Number(sessionStorage.getItem('impresaAppenaCreata')) || 0; sessionStorage.removeItem('impresaAppenaCreata'); } catch { /* facoltativo */ }
     upd(cur => {
       const ids = new Set(cur.presenze.map(p => p.impresaId));
-      return { ...cur, presenze: [...cur.presenze, ...assoc.filter(i => !ids.has(i.id)).map(i => ({ impresaId: i.id, presente: false, addetti: '' }))] };
+      return { ...cur, presenze: [
+        ...cur.presenze.map(p => p.impresaId === appena ? { ...p, presente: true } : p),
+        ...assoc.filter(i => !ids.has(i.id)).map(i => ({ impresaId: i.id, presente: i.id === appena, addetti: '' }))
+      ] };
     });
+  };
+  useEffect(() => { aggiornaElenco(); }, []);
+  // Un'impresa aggiunta durante il sopralluogo viene associata anche al cantiere e segnata come presente.
+  const aggiungiImpresa = async impresaId => {
+    const gia = await db.cantiereImprese.where('cantiereId').equals(cantiere.id).filter(l => l.impresaId === impresaId).count();
+    if (!gia) await db.cantiereImprese.add({ cantiereId: cantiere.id, impresaId });
+    upd(cur => cur.presenze.some(p => p.impresaId === impresaId)
+      ? { ...cur, presenze: cur.presenze.map(p => p.impresaId === impresaId ? { ...p, presente: true } : p) }
+      : { ...cur, presenze: [...cur.presenze, { impresaId, presente: true, addetti: '' }] });
   };
   const setPers = (idx, patch) => upd(cur => ({ ...cur, persone: cur.persone.map((p, i) => i === idx ? { ...p, ...patch } : p) }));
   const addPers = () => upd(cur => ({ ...cur, persone: [...cur.persone, { nome: '', ruolo: '', impresaId: '', firma: null }] }));
@@ -872,13 +1038,21 @@ function PassoPresenze({ v, upd, imprese, cantiere }) {
 
   return html`<section class="card">
     <h3>Imprese in cantiere</h3>
-    ${v.presenze.length ? v.presenze.map((p, idx) => html`<div class="pres">
-      <label class="check"><input type="checkbox" checked=${p.presente} onChange=${e => setPres(idx, { presente: e.target.checked })} />
-        <span><b>${nomi[p.impresaId]?.ragioneSociale || 'Impresa rimossa'}</b> <small>${TIPI_IMPRESA[nomi[p.impresaId]?.tipo] || ''}</small></span></label>
-      ${p.presente && html`<input class="num" type="number" min="0" inputmode="numeric" placeholder="Addetti" aria-label="Numero addetti"
-        value=${p.addetti} onInput=${e => setPres(idx, { addetti: e.target.value })} />`}
-    </div>`) : html`<${Empty}>Nessuna impresa associata al cantiere. <a href=${`#/cantieri/${cantiere.id}`}>Associale</a>.<//>`}
-    <button class="btn small ghost" onClick=${aggiornaElenco}>Aggiorna elenco dal cantiere</button>
+    <p class="hint">Spunta le imprese presenti oggi. Quelle aggiunte qui vengono associate anche alla scheda del cantiere.</p>
+    ${v.presenze.length ? v.presenze.map((p, idx) => html`<div class="pres-blocco">
+      <div class="pres">
+        <label class="check"><input type="checkbox" checked=${p.presente} onChange=${e => setPres(idx, { presente: e.target.checked })} />
+          <span><b>${nomi[p.impresaId]?.ragioneSociale || 'Impresa rimossa'}</b> <small>${TIPI_IMPRESA[nomi[p.impresaId]?.tipo] || ''}</small>
+            ${p.presente && html` <${StatoPos} impresa=${nomi[p.impresaId]} />`}</span></label>
+        ${p.presente && html`<input class="num" type="number" min="0" inputmode="numeric" placeholder="Addetti" aria-label="Numero addetti"
+          value=${p.addetti} onInput=${e => setPres(idx, { addetti: e.target.value })} />`}
+      </div>
+      ${p.presente && html`<${OperaiPresenti} presenza=${p} impresa=${nomi[p.impresaId]}
+        onCambia=${operai => upd(cur => ({ ...cur, presenze: cur.presenze.map((x, i) => i !== idx ? x
+          : { ...x, operai, addetti: operai.length > (Number(x.addetti) || 0) ? String(operai.length) : x.addetti }) }))} />`}
+    </div>`) : html`<p class="muted">Nessuna impresa ancora associata al cantiere: aggiungila qui sotto.</p>`}
+    <${AggiungiImpresa} cantiereId=${cantiere.id} imprese=${imprese} esclusi=${v.presenze.map(p => p.impresaId)}
+      onAggiungi=${aggiungiImpresa} ritorno=${location.hash.slice(1)} />
   </section>
   <section class="card">
     <h3>Persone presenti alla visita</h3>
@@ -1301,7 +1475,7 @@ function VerbaleView({ id }) {
       ${vedi && html`<${AnteprimaPdf} file=${vedi} onClose=${() => setVedi(null)} azioni=${PROVA ? null : html`
         <button class="btn ghost" onClick=${() => setVedi(null)}>Chiudi</button>
         <button class="btn" onClick=${email}>Email + PDF</button>
-        <button class="btn primary" onClick=${condividi}>Condividi PDF</button>`} />`}
+        <button class="btn primary" onClick=${condividi}>Condividi</button>`} />`}
       <div class="banner info">«Email con PDF allegato»: scegli Gmail o l'app della PEC; il PDF è già allegato con oggetto e testo,
         i destinatari sono copiati: incollali nel campo «A». Per la data certa firma digitalmente il PDF (PAdES) e invialo via PEC.</div>
     </section>
@@ -1705,12 +1879,19 @@ function App() {
     return () => removeEventListener('online', prova);
   }, []);
 
-  const [sez, a, b] = r;
+  const [sez, a, b, cParam] = r;
+  const precompila = cParam ? decodeURIComponent(cParam) : '';
+  // Un indirizzo con un identificativo non valido (es. un link vecchio) riporta alla Home invece di dare errore.
+  const idOk = x => /^\d+$/.test(x || '');
+  const nonValido = (sez === 'sopralluogo' || sez === 'verbale') ? !idOk(a)
+    : (sez === 'cantieri' && a) ? !(idOk(a) || a === 'nuovo')
+    : (sez === 'imprese' && a) ? !(idOk(a) || a === 'nuova') : false;
   let page;
-  if (sez === 'sopralluogo') page = html`<${Sopralluogo} id=${a} step=${b} />`;
+  if (nonValido) page = html`<${Home} />`;
+  else if (sez === 'sopralluogo') page = html`<${Sopralluogo} id=${a} step=${b} />`;
   else if (sez === 'verbale') page = html`<${VerbaleView} id=${a} />`;
   else if (sez === 'cantieri') page = a ? html`<${CantiereForm} key=${a} id=${a} />` : html`<${CantieriList} />`;
-  else if (sez === 'imprese') page = a ? html`<${ImpresaForm} key=${a + (b || '')} id=${a} cantiere=${b} />` : html`<${ImpreseList} />`;
+  else if (sez === 'imprese') page = a ? html`<${ImpresaForm} key=${a + (b || '') + precompila} id=${a} cantiere=${b} precompila=${precompila} />` : html`<${ImpreseList} />`;
   else if (sez === 'nc') page = html`<${RegistroNC} filtro=${a} key=${a} />`;
   else if (sez === 'catalogo') page = html`<${CatalogoPage} />`;
   else if (sez === 'impostazioni') page = html`<${Impostazioni} />`;
