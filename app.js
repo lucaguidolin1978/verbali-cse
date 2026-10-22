@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '22 · 22/10/2026';
+const VERSIONE = '23 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -806,6 +806,27 @@ const IMPRESA_VUOTA = {
 
 // Ponte (Cloudflare Worker) verso il registro europeo VIES: vedi la cartella ponte-piva.
 const PONTE_PIVA = 'https://ponte-piva.luca-guidolin78.workers.dev/';
+
+// Completa le imprese indicate (per id) con la sede dal registro VIES: solo i campi vuoti, mai quelli già scritti.
+// Restituisce quante imprese sono state completate. Senza rete o se il registro non risponde, si lascia com'è.
+async function completaImpreseDaVies(ids) {
+  if (!PONTE_PIVA || PROVA || !navigator.onLine) return 0;
+  const imprese = (await db.imprese.bulkGet(ids)).filter(i => i && pivaValida(i.piva || '') && !(i.sede || '').trim());
+  const esiti = await Promise.all(imprese.map(async i => {
+    try {
+      const ctrl = new AbortController();
+      const limite = setTimeout(() => ctrl.abort(), 10000);
+      const d = await fetch(`${PONTE_PIVA}?piva=${i.piva}`, { signal: ctrl.signal }).then(r => r.json());
+      clearTimeout(limite);
+      if (!d.valida || !d.indirizzo) return false;
+      const patch = { sede: d.indirizzo };
+      if (!(i.ragioneSociale || '').trim() && d.nome) patch.ragioneSociale = d.nome;
+      await db.imprese.update(i.id, patch);
+      return true;
+    } catch { return false; }
+  }));
+  return esiti.filter(Boolean).length;
+}
 
 // Controllo della cifra finale della partita IVA italiana.
 function pivaValida(p) {
@@ -1758,6 +1779,19 @@ function DriveImpostazioni() {
 
 // ---------- Cantiere da notifica preliminare ----------
 
+// Le imprese della notifica sono già in anagrafica (sezione Imprese) e collegate al cantiere:
+// qui si completa la sede dal registro VIES e si prepara il riepilogo per il CSE.
+async function impreseNotifica(letti) {
+  if (!letti.imprese.length) return '';
+  const pive = letti.imprese.map(i => i.piva);
+  const ids = (await db.imprese.toArray()).filter(i => pive.includes((i.piva || '').replace(/\D/g, ''))).map(i => i.id);
+  const conSede = await completaImpreseDaVies(ids);
+  const n = letti.imprese.length;
+  return ` ${n === 1 ? 'L\'impresa della notifica è stata aggiunta' : `Le ${n} imprese della notifica sono state aggiunte`} alla sezione Imprese e al cantiere` +
+    (conSede ? ` (sede trovata nel registro VIES per ${conSede === 1 ? '1 impresa' : conSede + ' imprese'})` : '') +
+    ': completa tu contatti e figure.';
+}
+
 // Elenco delle notifiche in Drive > Notifiche preliminari > Notifiche <anno>. Quelle non ancora usate
 // sono evidenziate; toccandone una si crea il cantiere con i dati letti dal PDF.
 function NotifichePage() {
@@ -1813,22 +1847,23 @@ function NotifichePage() {
         if (!scelta) { setLeggo(null); return; }
         if (scelta === 'completa') {
           const aggiunti = await completaCantiereDaNotifica(simile.id, letti, IMPRESA_VUOTA);
+          const testoImprese = await impreseNotifica(letti);
           go(`/cantieri/${simile.id}`);
           avviso(`Notifica n. ${numero} aggiunta al cantiere.` + (aggiunti.length ? ` Ho completato ${aggiunti.length === 1 ? '1 campo vuoto' : aggiunti.length + ' campi vuoti'}.` : '') +
-            (letti.imprese.length ? ' Le imprese della notifica sono collegate al cantiere.' : ''));
+            testoImprese);
           setLeggo(null);
           return;
         }
       }
       const cid = await creaCantiereDaNotifica(letti, CANTIERE_VUOTO, IMPRESA_VUOTA);
+      const testoImprese = await impreseNotifica(letti);
       const trovati = [['indirizzo', 'indirizzo'], ['committente', 'committente'], ['rl', 'responsabile dei lavori'], ['csp', 'CSP'],
         ['dataInizio', 'inizio lavori'], ['dataFine', 'fine presunta'], ['importo', 'importo']].filter(([k]) => letti.cantiere[k]).map(([, n]) => n);
       go(`/cantieri/${cid}`);
       avviso(letti.scansione
         ? `Cantiere creato dalla notifica n. ${numero}. Il PDF sembra una scansione: non contiene testo leggibile, quindi ho inserito solo il numero. Completa tu gli altri dati.`
-        : `Cantiere creato dalla notifica n. ${numero}. Ho compilato: ${trovati.join(', ') || 'solo il numero'}` +
-          (letti.imprese.length ? ` e ${letti.imprese.length === 1 ? '1 impresa' : letti.imprese.length + ' imprese'}` : '') +
-          '. Controlla i dati e completa quelli mancanti.');
+        : `Cantiere creato dalla notifica n. ${numero}. Ho compilato: ${trovati.join(', ') || 'solo il numero'}.` + testoImprese +
+          ' Controlla i dati e completa quelli mancanti.');
     } catch (e) { avviso('Non sono riuscito a leggere la notifica: ' + e.message); }
     setLeggo(null);
   };
