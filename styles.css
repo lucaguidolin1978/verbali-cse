@@ -139,6 +139,13 @@ nav.bottom a.on { color: var(--accent); font-weight: 600; }
 .tag.amber, .tag.g-grave { background: var(--amber-soft); color: var(--amber); }
 .tag.green { background: var(--green-soft); color: var(--green); }
 .tag.g-lieve { background: var(--blue-soft); color: var(--blue); }
+.tag.accento { background: var(--accent); color: #fff; }
+.row.notifica.nuova { box-shadow: inset 4px 0 0 var(--accent); }
+.row.notifica.nuova b { color: var(--accent); }
+.row.notifica:disabled { cursor: wait; opacity: .7; }
+.schede-cantieri.anni { display: flex; overflow-x: auto; }
+.schede-cantieri button { flex: 1; min-width: 80px; min-height: 44px; border: 0; border-radius: 9px; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.schede-cantieri button.on { background: var(--ink); color: #fff; }
 .red-text { color: var(--red); }
 
 .banner { padding: 12px 14px; border-radius: 10px; margin: 12px 0; font-size: .95rem; }

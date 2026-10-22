@@ -1,12 +1,15 @@
 // Salvataggio dei verbali su Google Drive: Sopralluoghi cantiere / <nome del cantiere> / verbale.pdf + verbale.docx
-// Accesso con Google Identity Services e permesso "drive.file": l'app vede e modifica solo i file che crea lei.
+// Accesso con Google Identity Services. Permessi: "drive.file" (l'app modifica solo i file che crea lei) e
+// "drive.readonly" (sola lettura, per vedere le notifiche preliminari che il CSE mette a mano su Drive).
 import { db, getImpostazioni, salvaImpostazioni } from './db.js';
 
 // Identificativo OAuth del progetto Google Cloud del CSE (tipo "Applicazione web").
 export const GOOGLE_CLIENT_ID = '824906668646-mu5idprnfnf8e8g3kao86e5kqu6ccrc6.apps.googleusercontent.com';
 export const CARTELLA_PRINCIPALE = 'Sopralluoghi cantiere';
+export const CARTELLA_NOTIFICHE = 'Notifiche preliminari';
 
-const AMBITO = 'https://www.googleapis.com/auth/drive.file';
+const LETTURA = 'https://www.googleapis.com/auth/drive.readonly';
+const AMBITO = 'https://www.googleapis.com/auth/drive.file ' + LETTURA;
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const CARTELLA = 'application/vnd.google-apps.folder';
@@ -18,6 +21,8 @@ try { token = JSON.parse(sessionStorage.getItem('driveToken') || 'null'); } catc
 const tokenValido = () => token && token.scade > Date.now() + 60000;
 // Vero quando si può salvare senza aprire la finestra di Google (accesso fatto da meno di un'ora).
 export const accessoAttivo = () => !!tokenValido();
+// Vero quando l'accesso in corso comprende anche la lettura dei file messi a mano su Drive.
+export const haLettura = () => !!tokenValido() && (token.ambito || '').includes(LETTURA);
 
 function caricaGoogle() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -30,9 +35,9 @@ function caricaGoogle() {
 }
 
 // Chiede un accesso a Google. Va chiamata da un tocco dell'utente (apre la finestra di Google se serve).
-export async function accedi({ conferma = false } = {}) {
+export async function accedi({ conferma = false, lettura = false } = {}) {
   if (!GOOGLE_CLIENT_ID) throw new Error('Google Drive non è ancora configurato nell\'app.');
-  if (!conferma && tokenValido()) return token.valore;
+  if (!conferma && tokenValido() && (!lettura || haLettura())) return token.valore;
   await caricaGoogle();
   const imp = await getImpostazioni();
   return new Promise((res, rej) => {
@@ -42,7 +47,11 @@ export async function accedi({ conferma = false } = {}) {
       hint: imp.driveEmail || undefined,
       callback: async r => {
         if (r.error) { rej(new Error('Accesso a Google non riuscito: ' + r.error)); return; }
-        token = { valore: r.access_token, scade: Date.now() + (Number(r.expires_in) || 3600) * 1000 };
+        token = { valore: r.access_token, scade: Date.now() + (Number(r.expires_in) || 3600) * 1000, ambito: r.scope || '' };
+        if (lettura && !haLettura()) {
+          rej(new Error('Per vedere le notifiche serve il permesso di lettura di Google Drive: riprova e lascia la spunta su «Visualizzare e scaricare tutti i file di Google Drive».'));
+          return;
+        }
         try { sessionStorage.setItem('driveToken', JSON.stringify(token)); } catch { /* facoltativo */ }
         if (!imp.driveCollegato) await salvaImpostazioni({ driveCollegato: true });
         res(token.valore);
@@ -176,3 +185,30 @@ export async function verbaliDaInviare() {
 }
 
 export const linkCartella = id => `https://drive.google.com/drive/folders/${id}`;
+
+// ---- Notifiche preliminari: Notifiche preliminari / Notifiche <anno> / <numero notifica>.pdf ----
+// La cartella dell'anno in corso si crea da sola (la prima volta che si apre l'app nel nuovo anno).
+export const nomeCartellaAnno = anno => `Notifiche ${anno}`;
+
+export async function cartelleNotifiche() {
+  const radice = await trovaOCreaCartella(CARTELLA_NOTIFICHE, null);
+  const corrente = new Date().getFullYear();
+  await trovaOCreaCartella(nomeCartellaAnno(corrente), radice);
+  const filtro = `mimeType='${CARTELLA}' and '${radice}' in parents and trashed=false`;
+  const r = await chiama(`${API}/files?q=${encodeURIComponent(filtro)}&fields=files(id,name)&pageSize=200&spaces=drive`);
+  const anni = (r.files || []).map(f => ({ id: f.id, anno: Number((f.name.match(/^notifiche\s+(\d{4})$/i) || [])[1]) }))
+    .filter(a => a.anno).sort((a, b) => b.anno - a.anno);
+  return { radice, anni, corrente };
+}
+
+export async function notificheDellaCartella(cartellaId) {
+  const filtro = `'${cartellaId}' in parents and mimeType='application/pdf' and trashed=false`;
+  const r = await chiama(`${API}/files?q=${encodeURIComponent(filtro)}&fields=files(id,name,createdTime)&pageSize=1000&orderBy=name desc&spaces=drive`);
+  return r.files || [];
+}
+
+export async function scaricaPdf(id) {
+  const r = await fetch(`${API}/files/${id}?alt=media`, { headers: { Authorization: 'Bearer ' + token.valore } });
+  if (!r.ok) throw new Error(`Download della notifica non riuscito (${r.status}).`);
+  return r.arrayBuffer();
+}

@@ -5,14 +5,16 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '20 · 22/10/2026';
+const VERSIONE = '21 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
 import {
   driveConfigurato, accedi as accediDrive, scollega as scollegaDrive, accessoAttivo,
-  salvaVerbaleSuDrive, verbaliDaInviare, linkCartella, CARTELLA_PRINCIPALE
+  salvaVerbaleSuDrive, verbaliDaInviare, linkCartella, CARTELLA_PRINCIPALE,
+  haLettura, cartelleNotifiche, notificheDellaCartella, scaricaPdf, nomeCartellaAnno, CARTELLA_NOTIFICHE
 } from './drive.js';
+import { caricaPdfJs, leggiNotifica, creaCantiereDaNotifica, completaCantiereDaNotifica, cantieriSimili, numeroDaFile } from './notifica.js';
 import { sincronizza, statoSync, usaDrive, usaQuestoDispositivo, unisci } from './sync.js';
 import { oggiISO, oraHHMM, fmtData, scaduta, ridimensiona, blobToDataURL, condividiOScarica, scarica } from './util.js';
 
@@ -457,6 +459,7 @@ function Home() {
     <button class="btn primary big" onClick=${() => setScelta(!scelta)} disabled=${!cantieri.length}>
       <${Icon} d=${I.plus} /> Nuovo sopralluogo</button>
     ${!cantieri.length && html`<p class="hint center">Crea prima un <a href="#/cantieri/nuovo">cantiere</a>.</p>`}
+    ${!PROVA && driveConfigurato() && html`<a class="btn big" href="#/notifiche">Carica cantiere da notifica preliminare</a>`}
     ${scelta && html`<div class="card list">
       <h3>Scegli il cantiere</h3>
       ${cantieri.map(c => html`<button class="row" onClick=${() => nuovoSopralluogo(c.id)}>
@@ -1632,6 +1635,12 @@ async function risolviConflitto(tipo) {
 // Avvia una sincronizzazione e, se serve, chiede all'utente come risolvere le differenze.
 async function avviaSync(interattivo) {
   const r = await sincronizza({ interattivo });
+  // Con l'accesso a Drive attivo si crea, se manca, la cartella delle notifiche dell'anno in corso.
+  const chiave = 'cartellaNotifiche' + new Date().getFullYear();
+  let fatta = false; try { fatta = sessionStorage.getItem(chiave) === '1'; } catch { /* facoltativo */ }
+  if (!fatta && haLettura()) {
+    cartelleNotifiche().then(() => { try { sessionStorage.setItem(chiave, '1'); } catch { /* facoltativo */ } }).catch(() => {});
+  }
   if (r?.conflitto) return risolviConflitto(r.conflitto);
   return { scaricato: 'Dati aggiornati da Google Drive.', caricato: 'Modifiche salvate su Google Drive.', 'nessuna-modifica': 'Dati già aggiornati.' }[r] || '';
 }
@@ -1745,8 +1754,118 @@ function DriveImpostazioni() {
   </section>`;
 }
 
+// ---------- Cantiere da notifica preliminare ----------
+
+// Elenco delle notifiche in Drive > Notifiche preliminari > Notifiche <anno>. Quelle non ancora usate
+// sono evidenziate; toccandone una si crea il cantiere con i dati letti dal PDF.
+function NotifichePage() {
+  const cantieri = useLive(() => db.cantieri.toArray());
+  const [fase, setFase] = useState('carico'); // carico | accesso | pronto | errore
+  const [msg, setMsg] = useState('');
+  const [cartelle, setCartelle] = useState(null);
+  const [anno, setAnno] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [leggo, setLeggo] = useState(null);
+
+  const apriAnno = async a => {
+    setAnno(a); setFiles([]); setFase('carico');
+    setFiles(a ? await notificheDellaCartella(a.id) : []);
+    setFase('pronto');
+  };
+  const carica = async interattivo => {
+    setMsg('');
+    try {
+      if (!navigator.onLine) { setFase('errore'); setMsg('Serve la connessione a internet per vedere le notifiche su Google Drive.'); return; }
+      if (!haLettura()) {
+        if (!interattivo) { setFase('accesso'); return; }
+        await accediDrive({ lettura: true });
+      }
+      setFase('carico');
+      const c = await cartelleNotifiche();
+      setCartelle(c);
+      await apriAnno(c.anni.find(a => a.anno === c.corrente) || c.anni[0]);
+    } catch (e) { setFase('errore'); setMsg(e.message); }
+  };
+  useEffect(() => { carica(false); }, []);
+
+  const usaNotifica = async f => {
+    const numero = numeroDaFile(f.name);
+    const gia = cantieri.find(c => (c.notificaNumero || '').trim() === numero);
+    if (gia) { go(`/cantieri/${gia.id}`); return; }
+    setLeggo(f.id);
+    try {
+      const letti = await leggiNotifica(await scaricaPdf(f.id), f.name);
+      const imp = await getImpostazioni();
+      const mioNome = [imp.titolo, imp.nome].map(s => (s || '').trim()).filter(Boolean).join(' ');
+      // Se il CSE della notifica è chi usa l'app, si usa il nome con il titolo delle impostazioni.
+      if (imp.nome && (!letti.cantiere.cse || stessoNome(letti.cantiere.cse, imp.nome.trim()))) letti.cantiere.cse = mioNome;
+
+      // Un cantiere con lo stesso indirizzo e senza numero di notifica è probabilmente lo stesso: si chiede.
+      const simile = cantieriSimili(cantieri, letti)[0];
+      if (simile) {
+        const scelta = await scegli(`Esiste già il cantiere «${simile.denominazione || 'senza nome'}» allo stesso indirizzo, senza numero di notifica. ` +
+          `Vuoi aggiungere a quello la notifica n. ${numero}? Completo solo i campi vuoti e collego le imprese, senza cambiare i dati che hai già inserito.`, [
+          { valore: 'completa', etichetta: 'Aggiungi a quel cantiere', primaria: true },
+          { valore: 'nuovo', etichetta: 'Crea un cantiere nuovo' },
+          { valore: null, etichetta: 'Annulla' }]);
+        if (!scelta) { setLeggo(null); return; }
+        if (scelta === 'completa') {
+          const aggiunti = await completaCantiereDaNotifica(simile.id, letti, IMPRESA_VUOTA);
+          go(`/cantieri/${simile.id}`);
+          avviso(`Notifica n. ${numero} aggiunta al cantiere.` + (aggiunti.length ? ` Ho completato ${aggiunti.length === 1 ? '1 campo vuoto' : aggiunti.length + ' campi vuoti'}.` : '') +
+            (letti.imprese.length ? ' Le imprese della notifica sono collegate al cantiere.' : ''));
+          setLeggo(null);
+          return;
+        }
+      }
+      const cid = await creaCantiereDaNotifica(letti, CANTIERE_VUOTO, IMPRESA_VUOTA);
+      const trovati = [['indirizzo', 'indirizzo'], ['committente', 'committente'], ['rl', 'responsabile dei lavori'], ['csp', 'CSP'],
+        ['dataInizio', 'inizio lavori'], ['dataFine', 'fine presunta'], ['importo', 'importo']].filter(([k]) => letti.cantiere[k]).map(([, n]) => n);
+      go(`/cantieri/${cid}`);
+      avviso(letti.scansione
+        ? `Cantiere creato dalla notifica n. ${numero}. Il PDF sembra una scansione: non contiene testo leggibile, quindi ho inserito solo il numero. Completa tu gli altri dati.`
+        : `Cantiere creato dalla notifica n. ${numero}. Ho compilato: ${trovati.join(', ') || 'solo il numero'}` +
+          (letti.imprese.length ? ` e ${letti.imprese.length === 1 ? '1 impresa' : letti.imprese.length + ' imprese'}` : '') +
+          '. Controlla i dati e completa quelli mancanti.');
+    } catch (e) { avviso('Non sono riuscito a leggere la notifica: ' + e.message); }
+    setLeggo(null);
+  };
+
+  if (!cantieri) return null;
+  const numeroUsato = n => cantieri.find(c => (c.notificaNumero || '').trim() === n);
+  const elenco = files.map(f => ({ f, numero: numeroDaFile(f.name), cantiere: numeroUsato(numeroDaFile(f.name)) }))
+    .sort((a, b) => (!!a.cantiere - !!b.cantiere) || b.numero.localeCompare(a.numero, 'it', { numeric: true }));
+  const nuove = elenco.filter(x => !x.cantiere).length;
+
+  return html`<${Header} title="Cantiere da notifica" back="/" />
+  <main>
+    ${PROVA || !driveConfigurato() ? html`<div class="banner warn">Funzione disponibile nell'app installata, con Google Drive collegato.</div>` : html`
+    <p class="hint">Metti i PDF delle notifiche in Google Drive › ${CARTELLA_NOTIFICHE} › ${nomeCartellaAnno(new Date().getFullYear())}, con il numero della notifica come nome del file (es. 166166.pdf).</p>
+    ${fase === 'accesso' && html`<div class="card">
+      <h3>Accesso alle notifiche</h3>
+      <p class="muted">Per vedere le notifiche che metti tu su Drive, l'app ha bisogno del permesso di <b>sola lettura</b> di Google Drive. Google te lo chiederà una volta.</p>
+      <button class="btn primary" onClick=${() => carica(true)}>Apri le notifiche su Drive</button></div>`}
+    ${fase === 'errore' && html`<div class="banner warn">${msg}</div>
+      <button class="btn" onClick=${() => carica(true)}>Riprova</button>`}
+    ${cartelle?.anni.length > 1 && html`<div class="schede-cantieri anni" role="tablist">${cartelle.anni.map(a => html`
+      <button type="button" role="tab" class=${anno?.id === a.id ? 'on' : ''} aria-selected=${anno?.id === a.id} onClick=${() => apriAnno(a).catch(e => { setFase('errore'); setMsg(e.message); })}>${a.anno}</button>`)}</div>`}
+    ${fase === 'carico' && html`<p class="empty">Cerco le notifiche su Drive…</p>`}
+    ${fase === 'pronto' && anno && html`<section class="card list">
+      <h3>${nomeCartellaAnno(anno.anno)} <small class="muted">· ${nuove ? (nuove === 1 ? '1 da caricare' : nuove + ' da caricare') : elenco.length ? 'tutte caricate' : 'vuota'}</small></h3>
+      ${elenco.length ? elenco.map(({ f, numero, cantiere }) => html`<button class=${'row notifica' + (cantiere ? '' : ' nuova')} disabled=${!!leggo} onClick=${() => usaNotifica(f)}>
+        <span><b>Notifica n. ${numero}</b><small>${cantiere ? cantiere.denominazione || 'Cantiere' : `Caricata su Drive il ${fmtData(f.createdTime.slice(0, 10))}`}</small></span>
+        ${leggo === f.id ? html`<span class="tag amber">Leggo…</span>`
+          : cantiere ? html`<span class="tag green">Già caricata</span>` : html`<span class="tag accento">Crea cantiere</span>`}
+      </button>`) : html`<p class="muted">Nessuna notifica in questa cartella.</p>`}
+    </section>
+    <div class="row-btns">
+      <button class="btn" onClick=${() => carica(true)}>Aggiorna</button>
+      <a class="btn ghost" href=${linkCartella(anno.id)} target="_blank" rel="noopener">Apri la cartella su Drive</a>
+    </div>`}`}
+  </main>`;
+}
+
 // Anteprima del PDF disegnata con pdf.js, per vederlo anche dove il download non è consentito.
-const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 
 function AnteprimaPdf({ file, onClose, azioni }) {
   const box = useRef();
@@ -1756,15 +1875,7 @@ function AnteprimaPdf({ file, onClose, azioni }) {
     document.body.style.overflow = 'hidden';
     (async () => {
       try {
-        if (!window.pdfjsLib) {
-          await new Promise((res, rej) => {
-            const s = document.createElement('script');
-            s.src = PDFJS + 'pdf.min.js'; s.onload = res; s.onerror = () => rej(new Error('libreria non disponibile'));
-            document.head.appendChild(s);
-          });
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js';
-        }
-        const doc = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+        const doc = await (await caricaPdfJs()).getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
         const larg = Math.min(box.current.clientWidth, 900);
         for (let i = 1; i <= doc.numPages && !annullato; i++) {
           const pag = await doc.getPage(i);
@@ -2004,12 +2115,13 @@ function App() {
   else if (sez === 'imprese') page = a ? html`<${ImpresaForm} key=${a + (b || '') + precompila} id=${a} cantiere=${b} precompila=${precompila} />` : html`<${ImpreseList} />`;
   else if (sez === 'nc') page = html`<${RegistroNC} filtro=${a} key=${a} />`;
   else if (sez === 'catalogo') page = html`<${CatalogoPage} />`;
+  else if (sez === 'notifiche') page = html`<${NotifichePage} />`;
   else if (sez === 'impostazioni') page = html`<${Impostazioni} />`;
   else page = html`<${Home} />`;
 
   return html`${page}
     <${Dialogo} />
-    ${sez !== 'sopralluogo' && html`<${Nav} attivo=${sez === 'verbale' ? 'cantieri' : sez === 'catalogo' ? 'nc' : (sez || '')} />`}`;
+    ${sez !== 'sopralluogo' && html`<${Nav} attivo=${sez === 'verbale' ? 'cantieri' : sez === 'catalogo' ? 'nc' : sez === 'notifiche' ? '' : (sez || '')} />`}`;
 }
 
 render(html`<${App} />`, document.getElementById('app'));
