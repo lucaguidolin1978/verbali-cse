@@ -5,7 +5,7 @@ import {
 } from './db.js';
 
 // Mostrata in Impostazioni: serve a capire se il tablet ha l'ultima versione.
-const VERSIONE = '16 · 22/10/2026';
+const VERSIONE = '17 · 22/10/2026';
 import { CHECKLIST, VOCI, GRAVITA } from './checklist.js';
 import { CATALOGO } from './catalogo.js';
 import { LOGO_SCURO } from './logo.js';
@@ -564,8 +564,10 @@ function CantiereForm({ id }) {
   };
   const toggleImpresa = async (impresaId, on) => {
     const cid = Number(id);
-    if (on) await db.cantiereImprese.add({ cantiereId: cid, impresaId });
-    else await db.cantiereImprese.where('cantiereId').equals(cid).filter(l => l.impresaId === impresaId).delete();
+    if (on) { await db.cantiereImprese.add({ cantiereId: cid, impresaId }); return; }
+    await db.cantiereImprese.where('cantiereId').equals(cid).filter(l => l.impresaId === impresaId).delete();
+    // Tolta dal cantiere: sparisce anche dalle presenze dei sopralluoghi in corso (i verbali chiusi restano com'erano).
+    await togliImpresaDalleBozze(cid, impresaId);
   };
 
   return html`<${Header} title=${nuovo ? 'Nuovo cantiere' : c.denominazione || 'Cantiere'} back="/cantieri">
@@ -604,6 +606,14 @@ function CantiereForm({ id }) {
     </section>
     <button class="btn danger ghost" onClick=${eliminaQuesto}>Elimina cantiere</button>`}
   </main>`;
+}
+
+async function togliImpresaDalleBozze(cantiereId, impresaId) {
+  await db.verbali.where('cantiereId').equals(cantiereId).filter(v => v.stato === 'bozza').modify(v => {
+    v.presenze = (v.presenze || []).filter(p => p.impresaId !== impresaId);
+    v.persone = (v.persone || []).map(p => p.impresaId === impresaId ? { ...p, impresaId: '' } : p);
+    for (const e of Object.values(v.esiti || {})) if (e.imprese) e.imprese = e.imprese.filter(x => x !== impresaId);
+  });
 }
 
 // Aggiunta di un'impresa: menu a tendina dell'anagrafica, ricerca per nome o P.IVA, creazione di una nuova.
@@ -646,7 +656,9 @@ function AggiungiImpresa({ cantiereId, imprese, esclusi, onAggiungi, ritorno }) 
 // Imprese del cantiere: elenco di quelle associate, più aggiunta da menu, da ricerca o da nuova P.IVA.
 function ImpreseCantiere({ cantiereId, imprese, links, onToggle }) {
   const associate = imprese.filter(i => links.some(l => l.impresaId === i.id));
-  const togli = async i => { if (await chiedi(`Togliere ${i.ragioneSociale} da questo cantiere? L'impresa resta in anagrafica.`, 'Togli')) onToggle(i.id, false); };
+  const togli = async i => {
+    if (await chiedi(`Togliere ${i.ragioneSociale} da questo cantiere? Sparirà anche dalle presenze dei sopralluoghi in corso; i verbali già chiusi non cambiano e l'impresa resta in anagrafica.`, 'Togli')) onToggle(i.id, false);
+  };
 
   return html`<section class="card">
     <h3>Imprese e lavoratori autonomi del cantiere</h3>
@@ -1014,10 +1026,12 @@ function PassoPresenze({ v, upd, imprese, cantiere }) {
     const assoc = await impreseDelCantiere(cantiere.id);
     let appena = 0;
     try { appena = Number(sessionStorage.getItem('impresaAppenaCreata')) || 0; sessionStorage.removeItem('impresaAppenaCreata'); } catch { /* facoltativo */ }
+    const associate = new Set(assoc.map(i => i.id));
     upd(cur => {
       const ids = new Set(cur.presenze.map(p => p.impresaId));
       return { ...cur, presenze: [
-        ...cur.presenze.map(p => p.impresaId === appena ? { ...p, presente: true } : p),
+        // Restano solo le imprese ancora associate al cantiere.
+        ...cur.presenze.filter(p => associate.has(p.impresaId)).map(p => p.impresaId === appena ? { ...p, presente: true } : p),
         ...assoc.filter(i => !ids.has(i.id)).map(i => ({ impresaId: i.id, presente: i.id === appena, addetti: '' }))
       ] };
     });
